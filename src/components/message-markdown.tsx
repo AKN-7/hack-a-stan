@@ -30,7 +30,7 @@ export function MessageMarkdown({ content }: MessageMarkdownProps) {
             const isInline = !className;
             if (isInline) {
               return (
-                <code className="px-1 py-0.5 bg-white/60 border border-border/50 rounded text-xs font-mono" {...props}>
+                <code className="px-1 py-0.5 bg-muted border border-border/50 rounded text-xs font-mono text-foreground" {...props}>
                   {children}
                 </code>
               );
@@ -42,7 +42,7 @@ export function MessageMarkdown({ content }: MessageMarkdownProps) {
             );
           },
           pre: ({ children }) => (
-            <pre className="my-2 p-3 bg-white/50 border border-border rounded-md overflow-x-auto text-xs">
+            <pre className="my-2 p-3 bg-muted border border-border rounded-md overflow-x-auto text-xs text-foreground">
               {children}
             </pre>
           ),
