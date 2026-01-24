@@ -16,9 +16,9 @@ const TRACK_CONFIG: Record<string, { icon: React.ElementType; label: string; col
   shape: { icon: Shapes, label: "Shapes", color: "text-amber-600", bgColor: "bg-amber-500", hoverBg: "hover:bg-amber-400" },
 };
 
-interface TrackItem extends ITrackItem {
+type TrackItem = ITrackItem & {
   id: string;
-}
+};
 
 interface GroupedTracks {
   [type: string]: TrackItem[];

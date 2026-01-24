@@ -400,42 +400,47 @@ export function Chat() {
   // Auto-grow textarea
   useEffect(() => {
     if (textareaRef.current) {
+      const minHeight = 24; // 1.5rem in pixels
       textareaRef.current.style.height = "auto";
-      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+      const scrollHeight = textareaRef.current.scrollHeight;
+      textareaRef.current.style.height = `${Math.max(scrollHeight, minHeight)}px`;
     }
   }, [input]);
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
+    <div className="flex h-full w-full flex-col overflow-hidden">
       {/* Messages */}
-      <ScrollArea className="flex-1 min-h-0 px-4">
-        <div className="space-y-4 py-4">
-          {messages.length === 0 ? (
-            <div className="text-center text-sm text-muted-foreground py-8">
-              <Sparkles className="h-8 w-8 mx-auto mb-3 text-primary/50" />
-              <p className="font-medium mb-1">AI Video Editor</p>
-              <p className="text-xs">
-                Ask me to edit your video, remove filler words, or generate B-roll.
-              </p>
-            </div>
-          ) : (
-            messages
-              .filter((msg) => msg.role === "user" || msg.content || msg.toolCalls?.length)
-              .map((message) => (
-                <MessageBubble key={message.id} message={message} isLoading={isLoading} />
-              ))
-          )}
-          {isLoading && !messages.some((m) => m.role === "assistant" && (m.content || m.toolCalls?.length)) && (
-            <ShimmeringText
-              text="Thinking..."
-              className="text-sm text-muted-foreground"
-              duration={1.5}
-              color="rgb(107 114 128)"
-              shimmerColor="var(--primary)"
-              spread={3}
-            />
-          )}
-          <div ref={messagesEndRef} />
+      <ScrollArea className="flex-1 min-h-0 w-full">
+        <div className="flex flex-col min-h-full w-full px-4">
+          <div className="flex-1" />
+          <div className="space-y-4 py-4 w-full">
+            {messages.length === 0 ? (
+              <div className="text-center text-sm text-muted-foreground py-8">
+                <Sparkles className="h-8 w-8 mx-auto mb-3 text-primary/50" />
+                <p className="font-medium mb-1">AI Video Editor</p>
+                <p className="text-xs">
+                  Ask me to edit your video, remove filler words, or generate B-roll.
+                </p>
+              </div>
+            ) : (
+              messages
+                .filter((msg) => msg.role === "user" || msg.content || msg.toolCalls?.length)
+                .map((message) => (
+                  <MessageBubble key={message.id} message={message} isLoading={isLoading} />
+                ))
+            )}
+            {isLoading && !messages.some((m) => m.role === "assistant" && (m.content || m.toolCalls?.length)) && (
+              <ShimmeringText
+                text="Thinking..."
+                className="text-sm text-muted-foreground"
+                duration={1.5}
+                color="rgb(107 114 128)"
+                shimmerColor="var(--primary)"
+                spread={3}
+              />
+            )}
+            <div ref={messagesEndRef} />
+          </div>
         </div>
       </ScrollArea>
 
@@ -462,9 +467,9 @@ export function Chat() {
       )}
 
       {/* Input */}
-      <div className="shrink-0 border-t border-border/50 p-4 w-full">
-        <form onSubmit={handleSubmit} className="w-full">
-          <div className="flex flex-col gap-1 rounded-2xl border bg-background px-3 py-2 shadow-sm w-full">
+      <div className="shrink-0 border-t border-border/50 p-4 w-full min-w-0">
+        <form onSubmit={handleSubmit} className="w-full min-w-0">
+          <div className="flex flex-col gap-1 rounded-2xl border bg-background px-3 py-2 shadow-sm w-full min-w-0">
             <textarea
               ref={textareaRef}
               value={input}
@@ -472,8 +477,9 @@ export function Chat() {
               onKeyDown={handleKeyDown}
               placeholder="Remove filler words, add a title..."
               disabled={isLoading}
-              className="max-h-32 w-full resize-none border-0 bg-transparent px-0 py-1 text-sm outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50 overflow-y-auto"
+              className="max-h-32 w-full min-w-0 resize-none border-0 bg-transparent px-0 py-1 text-sm outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50 overflow-y-auto"
               rows={1}
+              style={{ minHeight: '1.5rem' }}
             />
             <div className="flex items-center justify-between -mx-1">
               <button
@@ -513,7 +519,7 @@ function MessageBubble({ message, isLoading }: { message: ChatMessage; isLoading
   }
 
   return (
-    <div className={cn("flex flex-col gap-2", isUser ? "items-end" : "items-start")}>
+    <div className={cn("flex w-full flex-col gap-2", isUser ? "items-end" : "items-start")}>
       {/* Tool calls - show BEFORE the message for assistant */}
       {!isUser && message.toolCalls && message.toolCalls.length > 0 && (
         <div className="w-full space-y-2">

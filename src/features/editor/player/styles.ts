@@ -74,7 +74,7 @@ export const calculateContainerStyles = (
     transform: details.transform || "none",
     opacity: details.opacity !== undefined ? details.opacity / 100 : 1,
     transformOrigin: details.transformOrigin || "center center",
-    filter: `brightness(${details.brightness}%) blur(${details.blur}px)`,
+    filter: `brightness(${details.brightness ?? 100}%) blur(${details.blur ?? 0}px)`,
     rotate: details.rotate || "0deg",
     ...overrides // Merge overrides into the calculated styles
   };

@@ -724,21 +724,7 @@ export async function executeToolCall(
           },
         };
 
-        // Update Zustand store directly for immediate timeline visibility
-        // IMPORTANT: Get fresh state RIGHT NOW to avoid stale data
-        const freshState = useStore.getState();
-        const currentTrackItemsMap = freshState.trackItemsMap;
-        const currentTrackItemIds = freshState.trackItemIds;
-
-        useStore.setState({
-          trackItemsMap: {
-            ...currentTrackItemsMap,
-            [id]: payload as any,
-          },
-          trackItemIds: [...currentTrackItemIds, id],
-        });
-
-        // Also dispatch to DesignCombo state manager for composition rendering
+        // Dispatch to DesignCombo state manager - it will sync to Zustand via subscriptions
         dispatch(ADD_TEXT, {
           payload,
           options: {},
@@ -806,17 +792,17 @@ export async function executeToolCall(
         // Update Zustand store directly for immediate effect
         const updatedItem = {
           ...trackItem,
-          ...(payload.display && { display: { ...trackItem.display, ...payload.display } }),
+          ...(payload.display ? { display: { ...(trackItem.display as object || {}), ...(payload.display as object) } } : {}),
           details: {
-            ...trackItem.details,
-            ...(payload.details as object || {}),
+            ...((trackItem.details as object) || {}),
+            ...((payload.details as object) || {}),
           },
         };
 
         useStore.setState({
           trackItemsMap: {
             ...freshState.trackItemsMap,
-            [elementId]: updatedItem,
+            [elementId]: updatedItem as typeof trackItem,
           },
         });
 
@@ -948,13 +934,6 @@ export async function executeToolCall(
             },
           };
 
-          // Get fresh state right before updating
-          const freshState1 = useStore.getState();
-          useStore.setState({
-            trackItemsMap: { ...freshState1.trackItemsMap, [id]: payload as any },
-            trackItemIds: [...freshState1.trackItemIds, id],
-          });
-
           dispatch(ADD_TEXT, { payload, options: {} });
 
           return {
@@ -1031,13 +1010,6 @@ export async function executeToolCall(
             },
           };
 
-          // Update Zustand store - get fresh state right before updating
-          const freshState2 = useStore.getState();
-          useStore.setState({
-            trackItemsMap: { ...freshState2.trackItemsMap, [id]: payload as any },
-            trackItemIds: [...freshState2.trackItemIds, id],
-          });
-
           dispatch(ADD_TEXT, { payload, options: {} });
 
           return {
@@ -1085,13 +1057,6 @@ export async function executeToolCall(
               boxShadow: { color: "#000000", x: 2, y: 2, blur: 8 },
             },
           };
-
-          // Get fresh state right before updating
-          const freshState3 = useStore.getState();
-          useStore.setState({
-            trackItemsMap: { ...freshState3.trackItemsMap, [id]: payload as any },
-            trackItemIds: [...freshState3.trackItemIds, id],
-          });
 
           dispatch(ADD_TEXT, { payload, options: {} });
 
@@ -1316,21 +1281,19 @@ export async function executeToolCall(
               height: size.height,
               top: 0,
               left: 0,
+              opacity: 100,
+              brightness: 100,
+              blur: 0,
+              borderRadius: 0,
+              borderWidth: 0,
+              borderColor: "transparent",
             },
           };
 
-          // Update Zustand store directly for immediate timeline visibility
-          useStore.setState({
-            trackItemsMap: {
-              ...freshState.trackItemsMap,
-              [id]: imagePayload as any,
-            },
-            trackItemIds: [...freshState.trackItemIds, id],
-          });
-
-          // Also dispatch to DesignCombo state manager for composition rendering
+          // Dispatch to DesignCombo state manager - it will sync to Zustand via subscriptions
           dispatch(ADD_IMAGE, {
             payload: imagePayload,
+            options: {},
           });
 
           return {

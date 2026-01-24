@@ -195,7 +195,7 @@ const Editor = ({ tempId, id }: { tempId?: string; id?: string }) => {
 
 				{/* RIGHT PANEL - AI Chat */}
 				<div
-					className="flex flex-none bg-white border-l border-border h-[calc(100vh-56px)] shadow-sm w-[400px]"
+					className="flex flex-col flex-none bg-white border-l border-border h-[calc(100vh-56px)] shadow-sm w-[400px] overflow-hidden"
 					style={{
 						transform: isChatOpen ? 'translateX(0)' : 'translateX(100%)',
 						marginLeft: isChatOpen ? 0 : -400,
