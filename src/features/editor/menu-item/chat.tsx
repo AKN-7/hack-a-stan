@@ -46,15 +46,13 @@ function formatTime(ms: number): string {
 
 // Quick action buttons
 const QUICK_ACTIONS = [
+  { label: "Polish my video", prompt: "Make my video professional: remove all filler words, apply a clean TikTok-style caption preset, and suggest where I should add B-roll" },
   { label: "Remove filler words", prompt: "Remove all the ums, uhs, and filler words" },
+  { label: "Add captions", prompt: "Apply the tiktok-bold caption style to my video" },
+  { label: "Add B-roll", prompt: "Suggest B-roll moments for my video and generate images for the top 2 suggestions" },
+  { label: "Find key moments", prompt: "Find the most important moments for social clips" },
   { label: "Show transcript", prompt: "Show me the full transcript" },
   { label: "Project status", prompt: "What's the status of my project?" },
-  { label: "Add B-roll", prompt: "Suggest B-roll moments for my video" },
-  { label: "Trim silence", prompt: "Remove silent pauses from the video" },
-  { label: "Add captions", prompt: "Add captions to my video" },
-  { label: "Change style", prompt: "Apply a different video style" },
-  { label: "Find key moments", prompt: "Find the most important moments" },
-  { label: "Export video", prompt: "How do I export my video?" },
   { label: "Undo changes", prompt: "Undo my last edit" },
 ];
 
@@ -281,12 +279,16 @@ export function Chat() {
           let finalText = "";
           for (const block of continueData.content) {
             if (block.type === "text") {
-              finalText = block.text;
+              finalText += block.text;
             }
           }
 
           if (finalText) {
-            updateMessage(messageId, { content: finalText });
+            // Get existing content and append new text
+            const existingMessage = messages.find(m => m.id === messageId);
+            const existingContent = existingMessage?.content || "";
+            const newContent = existingContent ? `${existingContent}\n\n${finalText}` : finalText;
+            updateMessage(messageId, { content: newContent });
           }
 
           // If there are more tool calls, recursively process
@@ -363,16 +365,55 @@ export function Chat() {
     processResponse,
   ]);
 
-  // Handle quick action
+  // Handle quick action - auto-send for faster workflow
   const handleQuickAction = useCallback(
-    (prompt: string) => {
-      setInput(prompt);
-      // Focus textarea and trigger send
-      setTimeout(() => {
-        textareaRef.current?.focus();
-      }, 0);
+    async (prompt: string) => {
+      if (isLoading) return;
+
+      setLoading(true);
+      setError(null);
+
+      // Add user message
+      addMessage({ role: "user", content: prompt });
+
+      // Prepare conversation history
+      const conversationMessages: Anthropic.MessageParam[] = messages.map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+      }));
+      conversationMessages.push({ role: "user", content: prompt });
+
+      // Add placeholder assistant message
+      const assistantMessageId = addMessage({ role: "assistant", content: "" });
+
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: conversationMessages,
+            editorContext: getEditorContext(),
+          }),
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || "Failed to get response");
+        }
+
+        const data = (await response.json()) as Anthropic.Message;
+        await processResponse(data, assistantMessageId, conversationMessages);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Something went wrong";
+        updateMessage(assistantMessageId, {
+          content: `Error: ${errorMessage}`,
+        });
+        setError(errorMessage);
+      } finally {
+        setLoading(false);
+      }
     },
-    []
+    [isLoading, messages, addMessage, updateMessage, setLoading, setError, getEditorContext, processResponse]
   );
 
   // Handle keyboard shortcuts
@@ -550,46 +591,49 @@ function MessageBubble({ message, isLoading }: { message: ChatMessage; isLoading
   );
 }
 
-// Tool metadata with icons and categories
-const TOOL_META: Record<string, { name: string; icon: React.ElementType; category: string; color: string }> = {
+// Tool metadata with icons, categories, and progress messages
+const TOOL_META: Record<string, { name: string; icon: React.ElementType; category: string; color: string; progressMessage?: string }> = {
   // Transcript tools
-  delete_words: { name: "Delete Words", icon: Scissors, category: "Edit", color: "text-red-500" },
-  restore_words: { name: "Restore Words", icon: RotateCcw, category: "Edit", color: "text-green-500" },
-  edit_text: { name: "Edit Text", icon: Type, category: "Edit", color: "text-blue-500" },
-  smart_cuts: { name: "Smart Cuts", icon: Wand2, category: "Edit", color: "text-purple-500" },
-  reorder_clips: { name: "Reorder Clips", icon: ArrowUpDown, category: "Edit", color: "text-blue-500" },
-  trim_clip: { name: "Trim Clip", icon: Scissors, category: "Edit", color: "text-orange-500" },
-  get_transcript: { name: "Get Transcript", icon: FileText, category: "Info", color: "text-slate-500" },
-  get_project_status: { name: "Project Status", icon: Info, category: "Info", color: "text-slate-500" },
-  undo: { name: "Undo", icon: RotateCcw, category: "Edit", color: "text-slate-500" },
-  redo: { name: "Redo", icon: RotateCcw, category: "Edit", color: "text-slate-500" },
+  delete_words: { name: "Delete Words", icon: Scissors, category: "Edit", color: "text-red-500", progressMessage: "Finding and removing words..." },
+  restore_words: { name: "Restore Words", icon: RotateCcw, category: "Edit", color: "text-green-500", progressMessage: "Restoring deleted words..." },
+  edit_text: { name: "Edit Text", icon: Type, category: "Edit", color: "text-blue-500", progressMessage: "Updating transcript text..." },
+  smart_cuts: { name: "Smart Cuts", icon: Wand2, category: "Edit", color: "text-purple-500", progressMessage: "Analyzing speech patterns..." },
+  reorder_clips: { name: "Reorder Clips", icon: ArrowUpDown, category: "Edit", color: "text-blue-500", progressMessage: "Rearranging your clips..." },
+  trim_clip: { name: "Trim Clip", icon: Scissors, category: "Edit", color: "text-orange-500", progressMessage: "Adjusting clip boundaries..." },
+  get_transcript: { name: "Get Transcript", icon: FileText, category: "Info", color: "text-slate-500", progressMessage: "Loading transcript..." },
+  get_project_status: { name: "Project Status", icon: Info, category: "Info", color: "text-slate-500", progressMessage: "Checking project status..." },
+  undo: { name: "Undo", icon: RotateCcw, category: "Edit", color: "text-slate-500", progressMessage: "Reverting last change..." },
+  redo: { name: "Redo", icon: RotateCcw, category: "Edit", color: "text-slate-500", progressMessage: "Reapplying change..." },
   // Navigation tools
-  seek_to: { name: "Seek To", icon: Play, category: "Navigate", color: "text-blue-500" },
-  set_playback_rate: { name: "Playback Rate", icon: Clock, category: "Navigate", color: "text-blue-500" },
+  seek_to: { name: "Seek To", icon: Play, category: "Navigate", color: "text-blue-500", progressMessage: "Jumping to position..." },
+  set_playback_rate: { name: "Playback Rate", icon: Clock, category: "Navigate", color: "text-blue-500", progressMessage: "Adjusting playback speed..." },
   // Text overlay tools
-  add_text_overlay: { name: "Add Text", icon: Type, category: "Text", color: "text-indigo-500" },
-  edit_text_overlay: { name: "Edit Text", icon: Type, category: "Text", color: "text-indigo-500" },
-  remove_element: { name: "Remove Element", icon: X, category: "Edit", color: "text-red-500" },
+  add_text_overlay: { name: "Add Text", icon: Type, category: "Text", color: "text-indigo-500", progressMessage: "Creating text overlay..." },
+  edit_text_overlay: { name: "Edit Text", icon: Type, category: "Text", color: "text-indigo-500", progressMessage: "Updating text overlay..." },
+  remove_element: { name: "Remove Element", icon: X, category: "Edit", color: "text-red-500", progressMessage: "Removing element..." },
   // Caption tools
-  apply_caption_preset: { name: "Caption Preset", icon: Palette, category: "Style", color: "text-pink-500" },
-  customize_caption_style: { name: "Caption Style", icon: Palette, category: "Style", color: "text-pink-500" },
-  highlight_keywords: { name: "Highlight Words", icon: Type, category: "Style", color: "text-yellow-500" },
+  apply_caption_preset: { name: "Caption Preset", icon: Palette, category: "Style", color: "text-pink-500", progressMessage: "Applying caption style..." },
+  customize_caption_style: { name: "Caption Style", icon: Palette, category: "Style", color: "text-pink-500", progressMessage: "Customizing captions..." },
+  highlight_keywords: { name: "Highlight Words", icon: Type, category: "Style", color: "text-yellow-500", progressMessage: "Highlighting keywords..." },
   // Generation tools
-  generate_broll_image: { name: "Generate Image", icon: Image, category: "Generate", color: "text-emerald-500" },
-  generate_video_clip: { name: "Generate Video", icon: Video, category: "Generate", color: "text-emerald-500" },
-  extend_video: { name: "Extend Video", icon: Video, category: "Generate", color: "text-emerald-500" },
-  video_to_video: { name: "Transform Video", icon: Video, category: "Generate", color: "text-emerald-500" },
+  generate_broll_image: { name: "Generate Image", icon: Image, category: "Generate", color: "text-emerald-500", progressMessage: "Creating B-roll image with AI..." },
+  generate_video_clip: { name: "Generate Video", icon: Video, category: "Generate", color: "text-emerald-500", progressMessage: "Generating video clip..." },
+  extend_video: { name: "Extend Video", icon: Video, category: "Generate", color: "text-emerald-500", progressMessage: "Extending video with AI..." },
+  video_to_video: { name: "Transform Video", icon: Video, category: "Generate", color: "text-emerald-500", progressMessage: "Transforming video..." },
   // Audio tools
-  add_audio_visualization: { name: "Audio Viz", icon: Volume2, category: "Audio", color: "text-cyan-500" },
-  adjust_audio: { name: "Adjust Audio", icon: Volume2, category: "Audio", color: "text-cyan-500" },
+  add_audio_visualization: { name: "Audio Viz", icon: Volume2, category: "Audio", color: "text-cyan-500", progressMessage: "Adding audio visualization..." },
+  adjust_audio: { name: "Adjust Audio", icon: Volume2, category: "Audio", color: "text-cyan-500", progressMessage: "Adjusting audio levels..." },
   // Effects tools
-  apply_transition: { name: "Transition", icon: Layers, category: "Effects", color: "text-violet-500" },
-  apply_video_filter: { name: "Filter", icon: Palette, category: "Effects", color: "text-violet-500" },
-  add_shape: { name: "Add Shape", icon: Layers, category: "Effects", color: "text-violet-500" },
+  apply_transition: { name: "Transition", icon: Layers, category: "Effects", color: "text-violet-500", progressMessage: "Adding transition effect..." },
+  apply_video_filter: { name: "Filter", icon: Palette, category: "Effects", color: "text-violet-500", progressMessage: "Applying video filter..." },
+  add_shape: { name: "Add Shape", icon: Layers, category: "Effects", color: "text-violet-500", progressMessage: "Adding shape element..." },
   // Analysis tools
-  analyze_transcript: { name: "Analyze", icon: Search, category: "Analyze", color: "text-amber-500" },
-  suggest_broll_moments: { name: "B-Roll Suggest", icon: Search, category: "Analyze", color: "text-amber-500" },
-  find_key_moments: { name: "Key Moments", icon: Search, category: "Analyze", color: "text-amber-500" },
+  analyze_transcript: { name: "Analyze", icon: Search, category: "Analyze", color: "text-amber-500", progressMessage: "Analyzing your content..." },
+  suggest_broll_moments: { name: "B-Roll Suggest", icon: Search, category: "Analyze", color: "text-amber-500", progressMessage: "Finding B-roll opportunities..." },
+  find_key_moments: { name: "Key Moments", icon: Search, category: "Analyze", color: "text-amber-500", progressMessage: "Identifying key moments..." },
+  // Auto enhance tools
+  smooth_jump_cuts: { name: "Smooth Cuts", icon: Wand2, category: "Effects", color: "text-purple-500", progressMessage: "Smoothing jump cuts..." },
+  auto_enhance: { name: "Auto Enhance", icon: Sparkles, category: "Edit", color: "text-amber-500", progressMessage: "Auto-enhancing your video..." },
 };
 
 // Tool call card component
@@ -598,7 +642,8 @@ function ToolCallCard({ toolCall }: { toolCall: ToolCall }) {
     name: toolCall.name,
     icon: Wand2,
     category: "Tool",
-    color: "text-slate-500"
+    color: "text-slate-500",
+    progressMessage: "Processing..."
   };
   const Icon = meta.icon;
   const hasResult = toolCall.result !== undefined;
@@ -610,45 +655,58 @@ function ToolCallCard({ toolCall }: { toolCall: ToolCall }) {
     const result = toolCall.result as Record<string, unknown>;
     let summary = "";
     if (result.message) summary = result.message as string;
-    else if (result.deletedCount !== undefined) summary = `${result.deletedCount} words deleted`;
+    else if (result.deletedCount !== undefined) {
+      const timeSaved = result.timeSavedMs ? ` (saved ${((result.timeSavedMs as number) / 1000).toFixed(1)}s)` : "";
+      summary = `${result.deletedCount} words deleted${timeSaved}`;
+    }
+    else if (result.removedCount !== undefined) {
+      const timeSaved = result.timeSavedMs ? ` (saved ${((result.timeSavedMs as number) / 1000).toFixed(1)}s)` : "";
+      summary = `${result.removedCount} filler words removed${timeSaved}`;
+    }
     else if (result.restoredCount !== undefined) summary = `${result.restoredCount} words restored`;
     else if (result.editedCount !== undefined) summary = `${result.editedCount} words edited`;
-    else if (result.success === false) summary = "Failed";
+    else if (result.imageUrl) summary = "Image generated successfully";
+    else if (result.success === false) summary = result.error as string || "Failed";
     else summary = "Done";
 
-    // Truncate to 50 chars
-    return summary.length > 50 ? summary.substring(0, 47) + "..." : summary;
+    // Truncate to 60 chars
+    return summary.length > 60 ? summary.substring(0, 57) + "..." : summary;
   };
 
   return (
     <div
       className={cn(
-        "w-full max-w-full rounded-lg border px-3 py-2 overflow-hidden",
+        "w-full max-w-full rounded-lg border px-3 py-2 overflow-hidden transition-all duration-300",
         isError
           ? "border-red-200 bg-red-50"
           : hasResult
           ? "border-green-200 bg-green-50"
-          : "border-border bg-white"
+          : "border-primary/20 bg-primary/5"
       )}
     >
       <div className="flex items-center gap-2 overflow-hidden">
         {/* Tool icon with loading state */}
         {!hasResult ? (
-          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+          <div className="relative shrink-0">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          </div>
         ) : (
-          <Icon className={cn("h-4 w-4 shrink-0", isError ? "text-red-500" : meta.color)} />
+          <Icon className={cn("h-4 w-4 shrink-0", isError ? "text-red-500" : "text-green-600")} />
         )}
 
         {/* Tool info */}
         <div className="flex-1 min-w-0 overflow-hidden">
           <div className="flex items-center gap-1.5">
             <span className="text-xs font-medium truncate">{meta.name}</span>
+            {!hasResult && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
+                Running
+              </span>
+            )}
           </div>
-          {hasResult && (
-            <p className="text-[11px] text-muted-foreground truncate">
-              {getResultSummary()}
-            </p>
-          )}
+          <p className="text-[11px] text-muted-foreground truncate">
+            {hasResult ? getResultSummary() : (meta.progressMessage || "Processing...")}
+          </p>
         </div>
       </div>
     </div>

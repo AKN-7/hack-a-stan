@@ -9,6 +9,7 @@ import { calculateSegmentFrames } from "../utils/segment-frames";
 import { AbsoluteFill, Sequence, Video, useCurrentFrame, prefetch } from "remotion";
 import useStore from "../store/use-store";
 import useTranscriptStore from "../store/use-transcript-store";
+import useEffectsStore from "../store/use-effects-store";
 
 const Composition = () => {
   const [editableTextId, setEditableTextId] = useState<string | null>(null);
@@ -30,6 +31,9 @@ const Composition = () => {
   const getRenderSegments = useTranscriptStore((state) => state.getRenderSegments);
   const getCaptionsForRender = useTranscriptStore((state) => state.getCaptionsForRender);
 
+  // Subscribe to effects store for zoom/transition settings
+  const segmentZoom = useEffectsStore((state) => state.segmentZoom);
+
   // Get transcript-based render segments (now reactive to clips changes)
   const renderSegments = useMemo(() => getRenderSegments(), [clips, clipOrder, getRenderSegments]);
   const hasTranscriptData = renderSegments.length > 0;
@@ -49,6 +53,12 @@ const Composition = () => {
     }
     return null;
   }, [captions, currentTimeMs]);
+
+  // Debug: Log trackItemIds to see if images are included
+  const imageIdsInTrackItemIds = trackItemIds.filter(id => trackItemsMap[id]?.type === "image");
+  if (imageIdsInTrackItemIds.length > 0) {
+    console.log(`[Composition] trackItemIds contains ${imageIdsInTrackItemIds.length} image ID(s):`, imageIdsInTrackItemIds);
+  }
 
   const groupedItems = groupTrackItems({
     trackItemIds,
@@ -221,12 +231,27 @@ const Composition = () => {
   const nonVideoGroupedItems = useMemo(() => {
     if (!hasTranscriptData) return groupedItems;
 
-    return groupedItems.map(group =>
+    const filtered = groupedItems.map(group =>
       group.filter(item => {
         const trackItem = trackItemsMap[item.id];
         return trackItem && trackItem.type !== "video";
       })
     ).filter(group => group.length > 0);
+
+    // Debug: Log image items being rendered
+    const imageItems = filtered.flatMap(group =>
+      group.filter(item => trackItemsMap[item.id]?.type === "image")
+    );
+    if (imageItems.length > 0) {
+      console.log(`[Composition] Rendering ${imageItems.length} image(s):`, imageItems.map(item => ({
+        id: item.id,
+        from: trackItemsMap[item.id]?.display?.from,
+        to: trackItemsMap[item.id]?.display?.to,
+        src: trackItemsMap[item.id]?.details?.src?.substring(0, 50) + "...",
+      })));
+    }
+
+    return filtered;
   }, [groupedItems, hasTranscriptData, trackItemsMap]);
 
   // Prefetch all video sources for smooth playback
@@ -261,62 +286,91 @@ const Composition = () => {
 
   return (
     <>
-      {/* Transcript-driven video rendering */}
+      {/* Transcript-driven video rendering with optional zoom for jump-cut smoothing */}
       {hasTranscriptData && (
         <AbsoluteFill style={{ backgroundColor: "#000" }}>
-          {segmentFrames.map(({ segment, startFrame, durationInFrames, videoStartFrame, videoEndFrame }, index) => (
-            <Sequence
-              key={`transcript-${segment.clipId}-${index}`}
-              from={startFrame}
-              durationInFrames={durationInFrames}
-            >
-              <AbsoluteFill>
-                <Video
-                  src={segment.clipUrl}
-                  startFrom={videoStartFrame}
-                  endAt={videoEndFrame}
+          {segmentFrames.map(({ segment, startFrame, durationInFrames, videoStartFrame, videoEndFrame }, index) => {
+            // Calculate zoom scale based on settings
+            let zoomScale = 1;
+            if (segmentZoom.enabled) {
+              const { amount, pattern } = segmentZoom;
+              switch (pattern) {
+                case "alternate":
+                  // Alternate between normal (1) and zoomed (amount) on each segment
+                  zoomScale = index % 2 === 0 ? 1 : amount;
+                  break;
+                case "all-zoomed":
+                  // All segments are zoomed
+                  zoomScale = amount;
+                  break;
+                case "first-normal":
+                  // First segment normal, rest zoomed
+                  zoomScale = index === 0 ? 1 : amount;
+                  break;
+              }
+            }
+
+            return (
+              <Sequence
+                key={`transcript-${segment.clipId}-${index}`}
+                from={startFrame}
+                durationInFrames={durationInFrames}
+              >
+                <AbsoluteFill
                   style={{
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover",
+                    transform: zoomScale !== 1 ? `scale(${zoomScale})` : undefined,
+                    transformOrigin: "center center",
                   }}
-                  pauseWhenBuffering
-                />
-              </AbsoluteFill>
-            </Sequence>
-          ))}
+                >
+                  <Video
+                    src={segment.clipUrl}
+                    startFrom={videoStartFrame}
+                    endAt={videoEndFrame}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                    }}
+                    pauseWhenBuffering
+                  />
+                </AbsoluteFill>
+              </Sequence>
+            );
+          })}
         </AbsoluteFill>
       )}
 
-      {/* Non-video timeline items (text, captions, audio, etc.) */}
-      {nonVideoGroupedItems.map((group, index) => {
-        if (group.length === 0) return null;
-        if (group.length === 1) {
-          const item = trackItemsMap[group[0].id];
-          if (!item) return null;
-          return SequenceItem[item.type](item, {
-            fps,
-            handleTextChange,
-            onTextBlur,
-            editableTextId,
-            frame,
-            size,
-            isTransition: false
-          });
-        }
-        const firstItem = trackItemsMap[group[0].id];
-        if (!firstItem) return null;
-        const from = (firstItem.display.from / 1000) * fps;
-        return (
-          <TransitionSeries from={from} key={index}>
-            {group.map((item) => {
-              if (item.type === "transition") {
-                const durationInFrames = (item.duration / 1000) * fps;
-                return Transitions[item.kind]({
-                  durationInFrames,
-                  ...size,
-                  id: item.id,
-                  direction: item.direction
+      {/* Non-video timeline items (text, captions, audio, images/B-roll, etc.) */}
+      {/* Wrapped in AbsoluteFill with z-index to ensure overlays appear above video */}
+      <AbsoluteFill style={{ zIndex: 1 }}>
+        {nonVideoGroupedItems.map((group, index) => {
+          if (group.length === 0) return null;
+          if (group.length === 1) {
+            const item = trackItemsMap[group[0].id];
+            if (!item) return null;
+            return SequenceItem[item.type](item, {
+              fps,
+              handleTextChange,
+              onTextBlur,
+              editableTextId,
+              frame,
+              size,
+              isTransition: false
+            });
+          }
+          const firstItem = trackItemsMap[group[0].id];
+          if (!firstItem) return null;
+          const from = (firstItem.display.from / 1000) * fps;
+          return (
+            <TransitionSeries from={from} key={index}>
+              {group.map((item) => {
+                if (item.type === "transition") {
+                  const durationInFrames = (item.duration / 1000) * fps;
+                  return Transitions[item.kind]({
+                    durationInFrames,
+                    ...size,
+                    id: item.id,
+                    direction: item.direction
                 });
               }
               const trackItem = trackItemsMap[item.id];
@@ -325,6 +379,7 @@ const Composition = () => {
                 fps,
                 handleTextChange,
                 editableTextId,
+                frame,
                 isTransition: true,
                 size
               });
@@ -332,6 +387,7 @@ const Composition = () => {
           </TransitionSeries>
         );
       })}
+      </AbsoluteFill>
 
       {/* Fallback: Original video rendering when no transcript data */}
       {!hasTranscriptData && groupedItems.map((group, index) => {
@@ -369,6 +425,7 @@ const Composition = () => {
                 fps,
                 handleTextChange,
                 editableTextId,
+                frame,
                 isTransition: true,
                 size
               });

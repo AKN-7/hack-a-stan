@@ -52,7 +52,14 @@ const OverlayTracks = () => {
   }, [trackItemsMap, setState]);
 
   // Get total duration from transcript
-  const totalDurationMs = useMemo(() => getTotalDurationMs(), [getTotalDurationMs]);
+  const totalDurationMs = useMemo(() => {
+    const duration = getTotalDurationMs();
+    // Log warning if duration is 0 - overlay items won't render
+    if (duration <= 0 && Object.keys(trackItemsMap).length > 0) {
+      console.warn("[OverlayTracks] totalDurationMs is 0 or negative, overlay items will not render on timeline");
+    }
+    return duration;
+  }, [getTotalDurationMs, trackItemsMap]);
 
   // Group items by type (excluding video - that's handled by transcript track)
   const groupedTracks = useMemo((): GroupedTracks => {
@@ -69,6 +76,16 @@ const OverlayTracks = () => {
       }
       groups[item.type].push({ ...item, id } as TrackItem);
     });
+
+    // Debug logging for B-roll tracking
+    if (groups.image && groups.image.length > 0) {
+      console.log(`[OverlayTracks] Found ${groups.image.length} B-roll images:`, groups.image.map(i => ({
+        id: i.id,
+        from: i.display?.from,
+        to: i.display?.to,
+        src: i.details?.src?.substring(0, 50) + "...",
+      })));
+    }
 
     return groups;
   }, [trackItemsMap]);

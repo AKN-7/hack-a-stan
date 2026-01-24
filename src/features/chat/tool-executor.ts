@@ -1,9 +1,11 @@
 import useTranscriptStore from "@/features/editor/store/use-transcript-store";
 import useStore from "@/features/editor/store/use-store";
+import useEffectsStore from "@/features/editor/store/use-effects-store";
 import { dispatch } from "@designcombo/events";
 import { ADD_TEXT, ADD_IMAGE, ADD_VIDEO, ADD_AUDIO, EDIT_OBJECT, LAYER_DELETE } from "@designcombo/state";
 import { nanoid } from "nanoid";
 import { STYLE_CAPTION_PRESETS, applyPreset, groupCaptionItems } from "@/features/editor/control-item/floating-controls/caption-preset-picker";
+import { toast } from "sonner";
 
 export interface ToolResult {
   success: boolean;
@@ -44,6 +46,157 @@ const CAPTION_PRESET_MAP: Record<string, number> = {
   "underline-pop": 13,
   "shadow-glow": 14,
 };
+
+/**
+ * Map a source timestamp (from original video) to timeline position (after reordering/editing)
+ * This is critical for correct placement when clips have been reordered or trimmed
+ */
+function mapSourceToTimelineMs(sourceMs: number, clipId: string): number | null {
+  const transcriptStore = useTranscriptStore.getState();
+  const renderSegments = transcriptStore.getRenderSegments();
+
+  // Find the render segment that contains this source timestamp
+  for (const segment of renderSegments) {
+    if (segment.clipId === clipId && sourceMs >= segment.startMs && sourceMs <= segment.endMs) {
+      // Map: timeline position = segment offset + (source position - segment start)
+      return segment.offsetMs + (sourceMs - segment.startMs);
+    }
+  }
+
+  // If not found in any segment (word might be deleted), return null
+  return null;
+}
+
+/**
+ * Map all words to their timeline positions
+ * Returns words with an additional `timelineMs` property
+ */
+function getWordsWithTimelinePositions(): Array<{
+  word: { id: string; text: string; startMs: number; endMs: number; clipId: string };
+  timelineStartMs: number;
+  timelineEndMs: number;
+}> {
+  const transcriptStore = useTranscriptStore.getState();
+  const renderSegments = transcriptStore.getRenderSegments();
+  const clips = transcriptStore.clips;
+  const result: Array<{
+    word: { id: string; text: string; startMs: number; endMs: number; clipId: string };
+    timelineStartMs: number;
+    timelineEndMs: number;
+  }> = [];
+
+  for (const segment of renderSegments) {
+    const clip = clips[segment.clipId];
+    if (!clip) continue;
+
+    // Get words that fall within this segment's source time range
+    const segmentWords = clip.words.filter(
+      (w) => !w.isDeleted && w.startMs >= segment.startMs && w.endMs <= segment.endMs
+    );
+
+    for (const word of segmentWords) {
+      const timelineStartMs = segment.offsetMs + (word.startMs - segment.startMs);
+      const timelineEndMs = segment.offsetMs + (word.endMs - segment.startMs);
+
+      result.push({
+        word: {
+          id: word.id,
+          text: word.text,
+          startMs: word.startMs,
+          endMs: word.endMs,
+          clipId: segment.clipId,
+        },
+        timelineStartMs,
+        timelineEndMs,
+      });
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Check for conflicts with existing timeline items
+ * Returns conflicting items if any overlap with the given time range
+ */
+function findTimelineConflicts(
+  startMs: number,
+  endMs: number,
+  itemType: "text" | "image" | "all" = "all"
+): Array<{ id: string; type: string; from: number; to: number; text?: string }> {
+  const { trackItemsMap } = useStore.getState();
+  const conflicts: Array<{ id: string; type: string; from: number; to: number; text?: string }> = [];
+
+  for (const [id, item] of Object.entries(trackItemsMap)) {
+    // Filter by type if specified
+    if (itemType !== "all" && item.type !== itemType) continue;
+    // Skip non-overlay types
+    if (item.type === "video" || item.type === "audio" || item.type === "caption") continue;
+
+    const itemStart = item.display?.from ?? 0;
+    const itemEnd = item.display?.to ?? 0;
+
+    // Check for overlap: items overlap if one starts before the other ends
+    if (startMs < itemEnd && endMs > itemStart) {
+      conflicts.push({
+        id,
+        type: item.type,
+        from: itemStart,
+        to: itemEnd,
+        text: item.details?.text ? String(item.details.text).substring(0, 30) : undefined,
+      });
+    }
+  }
+
+  return conflicts;
+}
+
+/**
+ * Find the next available time slot after a given timestamp
+ * Useful for auto-adjusting placement to avoid conflicts
+ */
+function findNextAvailableSlot(
+  afterMs: number,
+  durationMs: number,
+  itemType: "text" | "image" | "all" = "all"
+): number {
+  const { trackItemsMap } = useStore.getState();
+  const transcriptStore = useTranscriptStore.getState();
+  const totalDuration = transcriptStore.getTotalDurationMs();
+
+  // Collect all items that might conflict
+  const items: Array<{ from: number; to: number }> = [];
+  for (const item of Object.values(trackItemsMap)) {
+    if (itemType !== "all" && item.type !== itemType) continue;
+    if (item.type === "video" || item.type === "audio" || item.type === "caption") continue;
+    if (item.display?.from !== undefined && item.display?.to !== undefined) {
+      items.push({ from: item.display.from, to: item.display.to });
+    }
+  }
+
+  // Sort by start time
+  items.sort((a, b) => a.from - b.from);
+
+  // Find the first gap that fits our duration
+  let candidateStart = afterMs;
+  for (const item of items) {
+    if (item.from >= candidateStart + durationMs) {
+      // Found a gap before this item
+      break;
+    }
+    if (item.to > candidateStart) {
+      // This item overlaps, move candidate to after it
+      candidateStart = item.to + 100; // Add 100ms buffer
+    }
+  }
+
+  // Make sure we don't exceed total duration
+  if (totalDuration > 0 && candidateStart + durationMs > totalDuration) {
+    candidateStart = Math.max(0, totalDuration - durationMs);
+  }
+
+  return candidateStart;
+}
 
 /**
  * Execute a tool call and return the result
@@ -137,17 +290,28 @@ export async function executeToolCall(
           const toDelete = activeWords.slice(startWordIndex, endWordIndex + 1);
 
           if (toDelete.length > 0) {
+            // Calculate time saved
+            const durationBefore = transcriptStore.getTotalDurationMs();
             transcriptStore.deleteWords(toDelete.map((w) => w.id));
+            const durationAfter = transcriptStore.getTotalDurationMs();
+            const timeSavedMs = durationBefore - durationAfter;
+            const timeSavedSec = (timeSavedMs / 1000).toFixed(1);
+
             const deletedText = toDelete.map((w) => w.text).join(" ");
             const preview = deletedText.length > 100
               ? deletedText.substring(0, 100) + "..."
               : deletedText;
+
+            toast.success(`Deleted ${toDelete.length} word(s)`, {
+              description: `Saved ${timeSavedSec}s · Press Cmd+Z to undo`,
+            });
 
             return {
               success: true,
               result: {
                 message: `Deleted ${toDelete.length} word(s) between "${fromPhrase}" and "${toPhrase}"`,
                 deletedCount: toDelete.length,
+                timeSavedMs,
                 preview,
                 includedBoundaries: includeBounds,
               },
@@ -193,12 +357,22 @@ export async function executeToolCall(
         });
 
         if (toDelete.length > 0) {
+          // Calculate time saved
+          const durationBefore = transcriptStore.getTotalDurationMs();
           transcriptStore.deleteWords(toDelete.map((w) => w.id));
+          const durationAfter = transcriptStore.getTotalDurationMs();
+          const timeSavedMs = durationBefore - durationAfter;
+          const timeSavedSec = (timeSavedMs / 1000).toFixed(1);
+
+          toast.success(`Deleted ${toDelete.length} word(s)`, {
+            description: `Saved ${timeSavedSec}s · Press Cmd+Z to undo`,
+          });
           return {
             success: true,
             result: {
               message: `Deleted ${toDelete.length} instance(s) of "${query}"`,
               deletedCount: toDelete.length,
+              timeSavedMs,
               words: toDelete.map((w) => w.text).slice(0, 10),
             },
           };
@@ -219,6 +393,7 @@ export async function executeToolCall(
 
         if (restoreAll) {
           transcriptStore.restoreAllWords();
+          toast.success("Restored all deleted words");
           return {
             success: true,
             result: { message: "Restored all deleted words" },
@@ -308,12 +483,24 @@ export async function executeToolCall(
 
         if (targets.includes("filler-words")) {
           if (mode === "apply") {
+            // Calculate time saved
+            const durationBefore = transcriptStore.getTotalDurationMs();
             const count = transcriptStore.autoRemoveFillerWords();
+            const durationAfter = transcriptStore.getTotalDurationMs();
+            const timeSavedMs = durationBefore - durationAfter;
+            const timeSavedSec = (timeSavedMs / 1000).toFixed(1);
+
+            if (count > 0) {
+              toast.success(`Removed ${count} filler word(s)`, {
+                description: `Saved ${timeSavedSec}s · um, uh, like...`,
+              });
+            }
             return {
               success: true,
               result: {
                 message: `Removed ${count} filler word(s)`,
                 removedCount: count,
+                timeSavedMs,
               },
             };
           } else if (mode === "suggest") {
@@ -480,15 +667,27 @@ export async function executeToolCall(
         }
 
         if (format === "words-with-timing") {
+          // CRITICAL: Return TIMELINE-MAPPED timestamps, not source timestamps!
+          // This ensures Claude uses the correct position after clip reordering/trimming
+          const wordsWithTimeline = getWordsWithTimelinePositions();
+
+          // If clipId filter is specified, filter the timeline-mapped words
+          const filteredWords = clipId
+            ? wordsWithTimeline.filter(w => w.word.clipId === clipId)
+            : wordsWithTimeline;
+
           return {
             success: true,
             result: {
-              words: words.map((w) => ({
-                text: w.text,
-                startMs: w.startMs,
-                endMs: w.endMs,
-                isDeleted: w.isDeleted,
+              words: filteredWords.map((w) => ({
+                text: w.word.text,
+                startMs: w.timelineStartMs,  // TIMELINE position, not source!
+                endMs: w.timelineEndMs,      // TIMELINE position, not source!
+                // Also include source timestamps for debugging if needed
+                sourceStartMs: w.word.startMs,
+                sourceEndMs: w.word.endMs,
               })),
+              note: "Timestamps are TIMELINE positions (after reordering/trimming). Use startMs/endMs for B-roll placement.",
             },
           };
         }
@@ -667,8 +866,41 @@ export async function executeToolCall(
 
         const id = nanoid();
         const fps = editorStore.fps || 30;
-        const from = startMs ?? 0;
-        const to = from + (durationMs ?? 3000);
+        const duration = durationMs ?? 3000;
+
+        // Validate startMs is provided - don't default to 0
+        if (startMs === undefined) {
+          console.warn("[Text Overlay] No startMs provided - this may cause incorrect placement");
+        }
+
+        let from = startMs ?? 0;
+        let to = from + duration;
+        let warning: string | undefined;
+
+        // Check for conflicts with existing text overlays
+        const conflicts = findTimelineConflicts(from, to, "text");
+        if (conflicts.length > 0) {
+          console.warn(`[Text Overlay] Found ${conflicts.length} conflict(s) at ${formatTime(from)}:`, conflicts);
+
+          // Auto-adjust to next available slot
+          const adjustedStart = findNextAvailableSlot(from, duration, "text");
+          if (adjustedStart !== from) {
+            warning = `Adjusted timing from ${formatTime(from)} to ${formatTime(adjustedStart)} to avoid overlap with existing text`;
+            console.log(`[Text Overlay] ${warning}`);
+            from = adjustedStart;
+            to = from + duration;
+          }
+        }
+
+        // Validate against project duration
+        const totalDuration = transcriptStore.getTotalDurationMs();
+        if (totalDuration > 0) {
+          if (from >= totalDuration) {
+            from = Math.max(0, totalDuration - duration);
+            to = from + duration;
+            warning = (warning ? warning + ". " : "") + `Clamped to project duration`;
+          }
+        }
 
         // Calculate position based on grid
         const { size } = editorStore;
@@ -730,13 +962,18 @@ export async function executeToolCall(
           options: {},
         });
 
+        toast.success("Text overlay added", {
+          description: `At ${formatTime(from)} - "${text.substring(0, 30)}${text.length > 30 ? "..." : ""}"`,
+        });
+
         return {
           success: true,
           result: {
-            message: `Added text overlay "${text.substring(0, 30)}..."`,
+            message: `Added text overlay "${text.substring(0, 30)}..."${warning ? ` (${warning})` : ""} at ${formatTime(from)}`,
             elementId: id,
             startMs: from,
             durationMs: to - from,
+            warning,
           },
         };
       }
@@ -1102,6 +1339,12 @@ export async function executeToolCall(
           appliedCount += captionIds.length;
         }
 
+        if (appliedCount > 0) {
+          toast.success(`Caption style applied`, {
+            description: `"${preset}" preset`,
+          });
+        }
+
         return {
           success: true,
           result: {
@@ -1234,13 +1477,30 @@ export async function executeToolCall(
       // ========================================================================
 
       case "generate_broll_image": {
-        const { prompt, style, aspectRatio, insertAt, durationMs } = toolInput as {
+        const {
+          prompt,
+          transcriptContext,
+          placement = "fullscreen",
+          overlaySize = 60,
+          style,
+          aspectRatio,
+          insertAt,
+          durationMs,
+        } = toolInput as {
           prompt: string;
+          transcriptContext?: string;
+          placement?: "fullscreen" | "center" | "top-center" | "bottom-center";
+          overlaySize?: number;
           style?: string;
           aspectRatio?: string;
           insertAt?: number;
           durationMs?: number;
         };
+
+        // Warn if no transcript context provided
+        if (!transcriptContext) {
+          console.warn("[B-roll] No transcriptContext provided. Consider using suggest_broll_moments first for better placement.");
+        }
 
         // Call the API route for B-roll generation
         const response = await fetch("/api/generate-broll", {
@@ -1268,42 +1528,157 @@ export async function executeToolCall(
           const freshState = useStore.getState();
           const { size } = freshState;
 
+          // Get total duration to validate insertAt bounds
+          const transcriptState = useTranscriptStore.getState();
+          const totalDurationMs = transcriptState.getTotalDurationMs();
+
+          // Validate and clamp insertAt to project bounds
+          let safeInsertAt = insertAt;
+          let warning: string | undefined;
+
+          if (totalDurationMs > 0) {
+            if (insertAt >= totalDurationMs) {
+              // Clamp to end of project minus the B-roll duration
+              safeInsertAt = Math.max(0, totalDurationMs - duration);
+              warning = `insertAt (${insertAt}ms) exceeded project duration (${totalDurationMs}ms). Clamped to ${safeInsertAt}ms.`;
+              console.warn(`[B-roll] ${warning}`);
+            } else if (insertAt + duration > totalDurationMs) {
+              // Shorten duration to fit within project
+              warning = `B-roll extends beyond project end. Duration may be truncated.`;
+              console.warn(`[B-roll] ${warning}`);
+            }
+          }
+
+          // Check for conflicts with existing B-roll images
+          const imageConflicts = findTimelineConflicts(safeInsertAt, safeInsertAt + duration, "image");
+          if (imageConflicts.length > 0) {
+            console.warn(`[B-roll] Found ${imageConflicts.length} B-roll conflict(s) at ${formatTime(safeInsertAt)}:`, imageConflicts);
+            // Auto-adjust to next available slot
+            const adjustedStart = findNextAvailableSlot(safeInsertAt, duration, "image");
+            if (adjustedStart !== safeInsertAt) {
+              const adjustWarning = `Adjusted timing from ${formatTime(safeInsertAt)} to ${formatTime(adjustedStart)} to avoid overlap`;
+              warning = warning ? `${warning}. ${adjustWarning}` : adjustWarning;
+              console.log(`[B-roll] ${adjustWarning}`);
+              safeInsertAt = adjustedStart;
+            }
+          }
+
+          // Calculate dimensions and position based on placement mode
+          let imageWidth: number;
+          let imageHeight: number;
+          let imageTop: number;
+          let imageLeft: number;
+          let borderRadius = 0;
+
+          if (placement === "fullscreen") {
+            // Fullscreen mode: covers entire video (traditional cutaway)
+            imageWidth = size.width;
+            imageHeight = size.height;
+            imageTop = 0;
+            imageLeft = 0;
+          } else {
+            // Overlay modes: centered, doesn't block speaker's face
+            const sizeClamped = Math.min(80, Math.max(40, overlaySize)); // Clamp between 40-80%
+            imageWidth = Math.round(size.width * (sizeClamped / 100));
+            imageHeight = Math.round(size.height * (sizeClamped / 100));
+            borderRadius = 16; // Rounded corners for overlays
+
+            // Center horizontally for all overlay modes
+            imageLeft = Math.round((size.width - imageWidth) / 2);
+
+            // Vertical positioning based on placement
+            switch (placement) {
+              case "top-center":
+                // Upper area - good for vertical video where face is lower
+                imageTop = Math.round(size.height * 0.08); // 8% from top
+                break;
+              case "bottom-center":
+                // Lower area - good when face is in upper portion
+                imageTop = Math.round(size.height - imageHeight - (size.height * 0.08));
+                break;
+              case "center":
+              default:
+                // True center
+                imageTop = Math.round((size.height - imageHeight) / 2);
+                break;
+            }
+          }
+
           const imagePayload = {
             id,
             type: "image",
             display: {
-              from: insertAt,
-              to: insertAt + duration,
+              from: safeInsertAt,
+              to: safeInsertAt + duration,
             },
             details: {
               src: data.url,
-              width: size.width,
-              height: size.height,
-              top: 0,
-              left: 0,
+              width: imageWidth,
+              height: imageHeight,
+              top: imageTop,
+              left: imageLeft,
               opacity: 100,
               brightness: 100,
               blur: 0,
-              borderRadius: 0,
-              borderWidth: 0,
-              borderColor: "transparent",
+              borderRadius,
+              borderWidth: placement !== "fullscreen" ? 2 : 0,
+              borderColor: placement !== "fullscreen" ? "rgba(255,255,255,0.2)" : "transparent",
+              // Use 'contain' so the full image is always visible without cropping
+              // 'cover' would fill the container but crop parts of the image
+              objectFit: "contain",
+            },
+            // Required for animation system - null values mean no animations
+            animations: {
+              in: null,
+              out: null,
             },
           };
 
-          // Dispatch to DesignCombo state manager - it will sync to Zustand via subscriptions
+          console.log(`[B-roll] Adding ${placement} image to timeline:`, {
+            id,
+            placement,
+            transcriptContext: transcriptContext?.substring(0, 50),
+            src: data.url.substring(0, 50) + "...",
+            from: safeInsertAt,
+            to: safeInsertAt + duration,
+            dimensions: { width: imageWidth, height: imageHeight, top: imageTop, left: imageLeft },
+          });
+
+          // Dispatch to DesignCombo state manager
           dispatch(ADD_IMAGE, {
             payload: imagePayload,
             options: {},
           });
 
+          // CRITICAL: Also update Zustand store directly for immediate UI effect
+          // This ensures the image appears on the timeline even if subscription sync is delayed
+          const currentState = useStore.getState();
+          useStore.setState({
+            trackItemsMap: {
+              ...currentState.trackItemsMap,
+              [id]: imagePayload as unknown as typeof currentState.trackItemsMap[string],
+            },
+            trackItemIds: [...currentState.trackItemIds, id],
+          });
+
+          console.log(`[B-roll] Updated Zustand store directly. trackItemIds now has ${currentState.trackItemIds.length + 1} items`);
+
+          const placementLabel = placement === "fullscreen" ? "cutaway" : `${placement} overlay`;
+          toast.success(`B-roll added (${placementLabel})`, {
+            description: `At ${formatTime(safeInsertAt)} - "${transcriptContext?.substring(0, 30) || prompt.substring(0, 30)}..."`,
+          });
+
           return {
             success: true,
             result: {
-              message: `Generated and inserted B-roll image for: "${prompt}"`,
+              message: `Generated and inserted B-roll (${placementLabel}) for: "${prompt}"${warning ? ` (${warning})` : ""}`,
               imageUrl: data.url,
               elementId: id,
-              insertedAt: insertAt,
+              insertedAt: safeInsertAt,
               durationMs: duration,
+              placement,
+              transcriptContext,
+              warning,
             },
           };
         }
@@ -1311,9 +1686,10 @@ export async function executeToolCall(
         return {
           success: true,
           result: {
-            message: `Generated B-roll image for: "${prompt}"`,
+            message: `Generated B-roll image for: "${prompt}" (not inserted - no insertAt specified)`,
             imageUrl: data.url,
             style,
+            hint: "Use insertAt parameter to place this image on the timeline. Run suggest_broll_moments first to find good placement times.",
           },
         };
       }
@@ -1701,33 +2077,45 @@ export async function executeToolCall(
           style?: string;
         };
 
-        const words = transcriptStore.getActiveWords();
+        // Get words with their TIMELINE positions (not source positions)
+        const wordsWithTimeline = getWordsWithTimelinePositions();
         const suggestions: Array<{
           timeMs: number;
           time: string;
           context: string;
           prompt: string;
+          sourceTimeMs: number; // Original source time for reference
         }> = [];
 
-        // Look for visual keywords
+        // Look for visual keywords that indicate something could be shown
         const visualKeywords = [
           "show", "see", "look", "watch", "imagine", "picture",
           "example", "like", "such as", "for instance",
         ];
 
         let i = 0;
-        while (i < words.length && suggestions.length < (maxSuggestions || 5)) {
-          const word = words[i];
+        while (i < wordsWithTimeline.length && suggestions.length < (maxSuggestions || 5)) {
+          const { word, timelineStartMs } = wordsWithTimeline[i];
           const wordLower = word.text.toLowerCase();
 
           if (visualKeywords.some((k) => wordLower.includes(k))) {
             // Get context (next 5-10 words)
-            const contextWords = words.slice(i, i + 10).map((w) => w.text).join(" ");
+            const contextWords = wordsWithTimeline
+              .slice(i, i + 10)
+              .map((w) => w.word.text)
+              .join(" ");
+
+            // Generate a concrete, realistic prompt instead of abstract "visual representation"
+            // The AI agent should interpret the context and create a specific stock-photo-style prompt
             suggestions.push({
-              timeMs: word.startMs,
-              time: formatTime(word.startMs),
+              timeMs: timelineStartMs, // USE TIMELINE POSITION!
+              time: formatTime(timelineStartMs),
               context: contextWords,
-              prompt: `Visual representation of: ${contextWords}`,
+              // NOTE: This is just the raw context - the AI agent calling generate_broll_image
+              // should interpret this and write a specific, concrete prompt describing
+              // a real photograph (e.g., "person typing on laptop" not "visual of productivity")
+              prompt: `[AI: Create a specific stock-photo prompt based on this context] "${contextWords}"`,
+              sourceTimeMs: word.startMs, // Keep source time for debugging
             });
             i += 10; // Skip ahead to avoid duplicate suggestions
           } else {
@@ -1735,11 +2123,14 @@ export async function executeToolCall(
           }
         }
 
+        console.log(`[suggest_broll_moments] Found ${suggestions.length} suggestions with TIMELINE timestamps`);
+
         return {
           success: true,
           result: {
-            message: `Found ${suggestions.length} B-roll opportunity(ies)`,
+            message: `Found ${suggestions.length} B-roll opportunities. IMPORTANT: When generating images, write SPECIFIC prompts describing real, tangible things to photograph (e.g., "close-up of hands typing on a MacBook keyboard" NOT "visual representation of work"). Think stock photography, not concept art.`,
             suggestions,
+            promptGuidance: "For each suggestion, create a prompt describing a REAL photograph of REAL objects. Be specific: what object, what angle, what setting. Example: Instead of 'visual of success', say 'person smiling while looking at phone showing positive graph'.",
           },
         };
       }
@@ -1750,7 +2141,8 @@ export async function executeToolCall(
           maxMoments?: number;
         };
 
-        const words = transcriptStore.getActiveWords();
+        // Get words with their TIMELINE positions (not source positions)
+        const wordsWithTimeline = getWordsWithTimelinePositions();
         const moments: Array<{
           timeMs: number;
           time: string;
@@ -1769,18 +2161,20 @@ export async function executeToolCall(
             { pattern: /^(so|now|but|here|this)/i, type: "transition" },
           ];
 
-          for (const word of words) {
-            if (moments.length >= max) break;
+          for (let i = 0; i < wordsWithTimeline.length && moments.length < max; i++) {
+            const { word, timelineStartMs } = wordsWithTimeline[i];
             for (const { pattern, type } of patterns) {
               if (pattern.test(word.text)) {
-                const contextWords = words
-                  .filter((w) => w.startMs >= word.startMs && w.startMs < word.startMs + 5000)
-                  .map((w) => w.text)
+                // Get context (next ~5 seconds of words)
+                const contextWords = wordsWithTimeline
+                  .slice(i, i + 15)
+                  .filter((w) => w.timelineStartMs < timelineStartMs + 5000)
+                  .map((w) => w.word.text)
                   .join(" ");
 
                 moments.push({
-                  timeMs: word.startMs,
-                  time: formatTime(word.startMs),
+                  timeMs: timelineStartMs, // USE TIMELINE POSITION!
+                  time: formatTime(timelineStartMs),
                   text: contextWords,
                   type,
                 });
@@ -1793,8 +2187,131 @@ export async function executeToolCall(
         return {
           success: true,
           result: {
-            message: `Found ${moments.length} key moment(s) for ${purpose || "general use"}`,
+            message: `Found ${moments.length} key moment(s) for ${purpose || "general use"} (timeline-mapped)`,
             moments,
+          },
+        };
+      }
+
+      // ========================================================================
+      // ENHANCEMENT & AUTO-EDIT TOOLS
+      // ========================================================================
+
+      case "smooth_jump_cuts": {
+        const { enabled, zoomAmount, pattern } = toolInput as {
+          enabled?: boolean;
+          zoomAmount?: number;
+          pattern?: "alternate" | "all-zoomed" | "first-normal";
+        };
+
+        const effectsStore = useEffectsStore.getState();
+        const shouldEnable = enabled !== false; // Default to true
+
+        if (shouldEnable) {
+          effectsStore.setSegmentZoom({
+            enabled: true,
+            amount: zoomAmount ?? 1.05,
+            pattern: pattern ?? "alternate",
+          });
+
+          return {
+            success: true,
+            result: {
+              message: `Smooth jump cuts enabled with ${((zoomAmount ?? 1.05) - 1) * 100}% zoom (${pattern ?? "alternate"} pattern)`,
+              enabled: true,
+              zoomAmount: zoomAmount ?? 1.05,
+              pattern: pattern ?? "alternate",
+            },
+          };
+        } else {
+          effectsStore.disableSmoothCuts();
+          return {
+            success: true,
+            result: {
+              message: "Smooth jump cuts disabled",
+              enabled: false,
+            },
+          };
+        }
+      }
+
+      case "auto_enhance": {
+        const { preset, removeFillerWords, smoothCuts, addCaptions, captionStyle } = toolInput as {
+          preset?: "quick" | "polished" | "cinematic";
+          removeFillerWords?: boolean;
+          smoothCuts?: boolean;
+          addCaptions?: boolean;
+          captionStyle?: string;
+        };
+
+        const effectsStore = useEffectsStore.getState();
+        const selectedPreset = preset ?? "polished";
+        const results: string[] = [];
+
+        // Determine what to apply based on preset
+        const shouldRemoveFillerWords = removeFillerWords ?? true;
+        const shouldSmoothCuts = smoothCuts ?? true;
+        const shouldAddCaptions = addCaptions ?? (selectedPreset !== "quick");
+
+        // Default caption styles per preset
+        const defaultCaptionStyles: Record<string, string> = {
+          quick: "minimal-clean",
+          polished: "tiktok-bold",
+          cinematic: "cinematic-white",
+        };
+
+        // 1. Remove filler words
+        if (shouldRemoveFillerWords) {
+          const count = transcriptStore.autoRemoveFillerWords();
+          results.push(`Removed ${count} filler word(s)`);
+        }
+
+        // 2. Enable smooth cuts
+        if (shouldSmoothCuts) {
+          const zoomAmount = selectedPreset === "cinematic" ? 1.08 : 1.05;
+          effectsStore.setSegmentZoom({
+            enabled: true,
+            amount: zoomAmount,
+            pattern: "alternate",
+          });
+          results.push(`Enabled jump-cut smoothing (${(zoomAmount - 1) * 100}% zoom)`);
+        }
+
+        // 3. Apply captions
+        if (shouldAddCaptions) {
+          const style = captionStyle ?? defaultCaptionStyles[selectedPreset];
+          const presetIndex = CAPTION_PRESET_MAP[style] ?? 0;
+          const presetConfig = STYLE_CAPTION_PRESETS[presetIndex];
+
+          if (presetConfig) {
+            const { trackItemsMap } = editorStore;
+            const groupedCaptions = groupCaptionItems(trackItemsMap);
+
+            let appliedCount = 0;
+            for (const sourceUrl in groupedCaptions) {
+              const captions = groupedCaptions[sourceUrl];
+              const captionIds = captions.map((c: { id: string }) => c.id);
+              await applyPreset(presetConfig, captionIds, captions);
+              appliedCount += captionIds.length;
+            }
+
+            if (appliedCount > 0) {
+              results.push(`Applied "${style}" caption style to ${appliedCount} caption(s)`);
+            } else {
+              results.push(`Caption style "${style}" ready (no captions to apply yet)`);
+            }
+          }
+        }
+
+        // Show a toast notification
+        toast.success(`Auto-enhance (${selectedPreset}) applied!`);
+
+        return {
+          success: true,
+          result: {
+            message: `Auto-enhance (${selectedPreset}) complete`,
+            preset: selectedPreset,
+            actions: results,
           },
         };
       }

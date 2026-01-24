@@ -151,6 +151,9 @@ const TranscriptClipsTrack = () => {
     };
   };
 
+  // Throttle ref for trim updates (every 50ms)
+  const lastTrimUpdateRef = useRef<number>(0);
+
   useEffect(() => {
     if (!trimmingClipId || !trimSide) return;
 
@@ -158,6 +161,15 @@ const TranscriptClipsTrack = () => {
       if (!trimStartRef.current) return;
 
       const { startX, originalTrimStart, originalTrimEnd, fullDuration, trackWidth, totalDurationMs } = trimStartRef.current;
+
+      // Guard against division by zero
+      if (trackWidth <= 0 || totalDurationMs <= 0) return;
+
+      // Throttle updates to every 50ms for better performance
+      const now = Date.now();
+      if (now - lastTrimUpdateRef.current < 50) return;
+      lastTrimUpdateRef.current = now;
+
       const deltaX = e.clientX - startX;
 
       // Convert pixel delta to ms delta based on track width and total duration
@@ -217,7 +229,9 @@ const TranscriptClipsTrack = () => {
     if (sourceIndex !== null && sourceIndex !== targetIndex && clipId) {
       const newOrder = [...clipOrder];
       newOrder.splice(sourceIndex, 1);
-      newOrder.splice(targetIndex, 0, clipId);
+      // Adjust targetIndex if source was before target (indices shifted after splice)
+      const adjustedTarget = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+      newOrder.splice(adjustedTarget, 0, clipId);
       reorderClips(newOrder);
     }
 

@@ -175,7 +175,7 @@ const transcriptTools: Tool[] = [
   {
     name: "get_transcript",
     description:
-      "Get the current transcript content with word-level data, timing, and clip information.",
+      "Get the current transcript content. IMPORTANT: When using 'words-with-timing' format, the returned timestamps (startMs/endMs) are TIMELINE positions - these are correct for B-roll and text placement even when clips have been reordered or trimmed.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -190,7 +190,7 @@ const transcriptTools: Tool[] = [
         format: {
           type: "string",
           enum: ["full", "text-only", "words-with-timing"],
-          description: "Output format. Default is 'full'.",
+          description: "Output format. Use 'words-with-timing' to get timeline-mapped timestamps for B-roll/overlay placement. Default is 'full'.",
         },
       },
     },
@@ -278,7 +278,7 @@ const textOverlayTools: Tool[] = [
   {
     name: "add_text_overlay",
     description:
-      "Add an animated text overlay (title, subtitle, lower-third, callout) to the video. Supports multiple animation presets and styling options.",
+      "Add an animated text overlay (title, subtitle, hook, callout) to the video. IMPORTANT: Always specify startMs based on transcript timing - use get_transcript to find the right moment. The system will auto-adjust if the time slot conflicts with existing text. For hooks, use startMs=0. For contextual text, find the exact timestamp from transcript words.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -293,11 +293,11 @@ const textOverlayTools: Tool[] = [
         },
         startMs: {
           type: "number",
-          description: "When the text should appear (milliseconds from start)",
+          description: "REQUIRED: When the text should appear (milliseconds). Use 0 for hooks at the start, or get exact timestamps from get_transcript for contextual text. Do NOT guess timestamps.",
         },
         durationMs: {
           type: "number",
-          description: "How long the text stays visible (default: 3000ms)",
+          description: "How long the text stays visible (default: 3000ms). Keep it short - 2-4 seconds is ideal.",
         },
         position: {
           type: "object",
@@ -541,18 +541,31 @@ const generationTools: Tool[] = [
   {
     name: "generate_broll_image",
     description:
-      "Generate a B-roll image using AI (Gemini). Creates visual assets that can be inserted as cutaways.",
+      "Generate a REALISTIC stock-photo style B-roll image using AI and insert it into the timeline. CRITICAL: Write prompts that describe REAL photographs of REAL things - like stock photos from Getty/Shutterstock. Example good prompts: 'close-up of hands typing on laptop keyboard', 'person smiling while holding coffee cup in modern office', 'smartphone on wooden desk showing notification'. Example BAD prompts: 'visual representation of productivity', 'concept of success', 'abstract technology'. Before calling this tool, call 'suggest_broll_moments' first.",
     input_schema: {
       type: "object" as const,
       properties: {
         prompt: {
           type: "string",
-          description: "Detailed description of image to generate. Be specific about subject, style, mood.",
+          description: "MUST describe a REAL photograph of REAL objects. Be specific: what object/person, what angle, what setting. Think 'stock photo description'. BAD: 'visual of technology'. GOOD: 'MacBook Pro on white desk with coffee cup, top-down view'.",
+        },
+        transcriptContext: {
+          type: "string",
+          description: "REQUIRED: The spoken words/context from suggest_broll_moments that this image relates to. This ensures the B-roll matches what's being discussed.",
+        },
+        placement: {
+          type: "string",
+          enum: ["fullscreen", "center", "top-center", "bottom-center"],
+          description: "How to display the B-roll: 'fullscreen' = complete cutaway covering entire video. 'center' = centered overlay (60% size) that complements speaker. 'top-center' = upper area, good for vertical video where face is lower. 'bottom-center' = lower area, good when face is upper. NEVER use corner placements.",
+        },
+        overlaySize: {
+          type: "number",
+          description: "Size of non-fullscreen overlays as percentage (default: 60, range: 40-80). Only used when placement is not fullscreen.",
         },
         style: {
           type: "string",
           enum: ["photorealistic", "illustration", "cinematic", "minimalist", "abstract", "3d-render", "anime"],
-          description: "Visual style for the generated image",
+          description: "Visual style. 'cinematic' and 'photorealistic' work best for professional B-roll.",
         },
         aspectRatio: {
           type: "string",
@@ -561,14 +574,14 @@ const generationTools: Tool[] = [
         },
         insertAt: {
           type: "number",
-          description: "Optional: Insert as B-roll at this timestamp (milliseconds)",
+          description: "REQUIRED: Timestamp in milliseconds to insert the B-roll. Use the timeMs from suggest_broll_moments.",
         },
         durationMs: {
           type: "number",
-          description: "How long to show the B-roll (default: 3000ms)",
+          description: "How long to show the B-roll (default: 3000ms). Keep it short - 2-4 seconds works best.",
         },
       },
-      required: ["prompt"],
+      required: ["prompt", "transcriptContext", "insertAt"],
     },
   },
   {
@@ -868,7 +881,7 @@ const analysisTools: Tool[] = [
   {
     name: "suggest_broll_moments",
     description:
-      "Analyze transcript and suggest where B-roll would enhance the video, with image/video prompts.",
+      "Analyze transcript and find moments where B-roll images would enhance the video. Returns timestamps and context. IMPORTANT: When using these suggestions with generate_broll_image, you must write REALISTIC stock-photo style prompts - describe actual photographs of real objects (e.g., 'person using smartphone' not 'concept of communication').",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -906,6 +919,71 @@ const analysisTools: Tool[] = [
 ];
 
 // ============================================================================
+// ENHANCEMENT & AUTO-EDIT TOOLS
+// ============================================================================
+
+const enhancementTools: Tool[] = [
+  {
+    name: "smooth_jump_cuts",
+    description:
+      "Apply subtle zoom effects to video segments to smooth jump cuts and make edits less jarring. This alternates zoom levels between segments so cuts appear as intentional style rather than abrupt jumps. Essential for professional-looking talking head videos.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        enabled: {
+          type: "boolean",
+          description: "Whether to enable or disable smooth cuts (default: true to enable)",
+        },
+        zoomAmount: {
+          type: "number",
+          description: "Zoom multiplier for alternating segments (default: 1.05 = 5% zoom). Range 1.02-1.15 recommended.",
+        },
+        pattern: {
+          type: "string",
+          enum: ["alternate", "all-zoomed", "first-normal"],
+          description: "How to apply zoom: 'alternate' (recommended) alternates between normal and zoomed, 'all-zoomed' zooms all segments, 'first-normal' keeps first segment normal and zooms rest.",
+        },
+      },
+    },
+  },
+  {
+    name: "auto_enhance",
+    description:
+      "One-click enhancement that automatically polishes the video with professional editing techniques. This is the 'magic button' that makes raw footage look edited. Combines filler word removal, jump-cut smoothing, and caption styling. Use this when the user wants their video to look good quickly.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        preset: {
+          type: "string",
+          enum: ["quick", "polished", "cinematic"],
+          description: "'quick' removes filler words and adds smooth cuts. 'polished' also adds captions. 'cinematic' applies premium caption style. Default is 'polished'.",
+        },
+        removeFillerWords: {
+          type: "boolean",
+          description: "Whether to auto-remove filler words (um, uh, like, etc.). Default: true",
+        },
+        smoothCuts: {
+          type: "boolean",
+          description: "Whether to apply zoom-based jump cut smoothing. Default: true",
+        },
+        addCaptions: {
+          type: "boolean",
+          description: "Whether to apply caption preset. Default: true for 'polished' and 'cinematic'",
+        },
+        captionStyle: {
+          type: "string",
+          enum: [
+            "tiktok-neon", "tiktok-bold", "karaoke-green", "hormozi-style",
+            "beasty-style", "minimal-clean", "cinematic-white"
+          ],
+          description: "Caption style to apply (if addCaptions is true). Default varies by preset.",
+        },
+      },
+    },
+  },
+];
+
+// ============================================================================
 // EXPORT ALL TOOLS
 // ============================================================================
 
@@ -918,6 +996,7 @@ export const editorTools: Tool[] = [
   ...audioTools,
   ...effectsTools,
   ...analysisTools,
+  ...enhancementTools,
 ];
 
 // Tool categories for reference
@@ -930,6 +1009,7 @@ export const toolCategories = {
   audio: ["add_audio_visualization", "adjust_audio"],
   effects: ["apply_transition", "apply_video_filter", "add_shape"],
   analysis: ["analyze_transcript", "suggest_broll_moments", "find_key_moments"],
+  enhancement: ["smooth_jump_cuts", "auto_enhance"],
 };
 
 // Helper type for tool inputs
@@ -1144,5 +1224,17 @@ export interface ToolInput {
   find_key_moments: {
     purpose?: "social-clips" | "highlights" | "chapters" | "quotes";
     maxMoments?: number;
+  };
+  smooth_jump_cuts: {
+    enabled?: boolean;
+    zoomAmount?: number;
+    pattern?: "alternate" | "all-zoomed" | "first-normal";
+  };
+  auto_enhance: {
+    preset?: "quick" | "polished" | "cinematic";
+    removeFillerWords?: boolean;
+    smoothCuts?: boolean;
+    addCaptions?: boolean;
+    captionStyle?: string;
   };
 }

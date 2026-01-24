@@ -52,10 +52,24 @@ export default function Image({
         >
           <div
             id={`${item.id}-reveal-mask`}
-            style={calculateMediaStyles(details, crop)}
+            style={{
+              ...calculateMediaStyles(details, crop),
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              backgroundColor: (details as any).objectFit === "contain" ? "transparent" : undefined,
+            }}
           >
             {/* image layer */}
-            <Img data-id={item.id} src={details.src} />
+            <Img
+              data-id={item.id}
+              src={details.src}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: ((details as any).objectFit as "cover" | "contain") || "cover",
+              }}
+            />
           </div>
         </MaskAnim>
       </ContentAnim>

@@ -20,6 +20,7 @@ import { generateId } from "@designcombo/timeline";
 import type { IDesign } from "@designcombo/types";
 import { useDownloadState } from "./store/use-download-state";
 import useTranscriptStore from "./store/use-transcript-store";
+import useStore from "./store/use-store";
 import DownloadProgressModal from "./download-progress-modal";
 import AutosizeInput from "@/components/ui/autosize-input";
 import { debounce } from "lodash";
@@ -49,6 +50,7 @@ export default function Navbar({
 
   // Get transcript undo/redo functions
   const { undo: transcriptUndo, redo: transcriptRedo, canUndo, canRedo } = useTranscriptStore();
+  const { playerRef, fps } = useStore();
 
   const handleUndo = useCallback(() => {
     // Try transcript undo first (since it's the primary editing mode)
@@ -64,7 +66,7 @@ export default function Navbar({
     dispatch(HISTORY_REDO);
   }, [transcriptRedo]);
 
-  // Global keyboard shortcuts for undo/redo
+  // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Skip if user is typing in an input/textarea
@@ -78,6 +80,45 @@ export default function Navbar({
 
       const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
       const ctrlOrCmd = isMac ? e.metaKey : e.ctrlKey;
+
+      // Space: Play/Pause
+      if (e.key === " " || e.code === "Space") {
+        e.preventDefault();
+        const player = playerRef?.current;
+        if (player) {
+          const isPlaying = player.isPlaying();
+          if (isPlaying) {
+            player.pause();
+          } else {
+            player.play();
+          }
+        }
+        return;
+      }
+
+      // Arrow Left: Seek backward (1 frame, or 30 frames with Shift)
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        const player = playerRef?.current;
+        if (player) {
+          const currentFrame = player.getCurrentFrame();
+          const step = e.shiftKey ? 30 : 1;
+          player.seekTo(Math.max(0, currentFrame - step));
+        }
+        return;
+      }
+
+      // Arrow Right: Seek forward (1 frame, or 30 frames with Shift)
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        const player = playerRef?.current;
+        if (player) {
+          const currentFrame = player.getCurrentFrame();
+          const step = e.shiftKey ? 30 : 1;
+          player.seekTo(currentFrame + step);
+        }
+        return;
+      }
 
       // Undo: Ctrl+Z / Cmd+Z
       if (ctrlOrCmd && e.key.toLowerCase() === "z" && !e.shiftKey) {
@@ -99,7 +140,7 @@ export default function Navbar({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleUndo, handleRedo]);
+  }, [handleUndo, handleRedo, playerRef]);
 
   const handleCreateProject = async () => {};
 

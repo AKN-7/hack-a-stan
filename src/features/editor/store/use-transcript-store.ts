@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { toast } from "sonner";
 // NOTE: We no longer dispatch to DesignCombo for video clips.
 // The transcript store IS the source of truth.
 
@@ -551,6 +552,14 @@ const useTranscriptStore = create<ITranscriptStore>()(
             },
           },
         }));
+
+        // Show error notification if transcription failed
+        if (status === "error") {
+          const clipIndex = get().clipOrder.indexOf(clipId) + 1;
+          toast.error(`Clip ${clipIndex} failed to transcribe`, {
+            description: error || "Please try uploading again",
+          });
+        }
       },
 
       setClipTranscript: (clipId: string, words: TranscriptWord[], text: string) => {
@@ -565,6 +574,32 @@ const useTranscriptStore = create<ITranscriptStore>()(
             },
           },
         }));
+
+        // Show success notification
+        const clipIndex = get().clipOrder.indexOf(clipId) + 1;
+        const durationMs = words.length > 0 ? words[words.length - 1].endMs - words[0].startMs : 0;
+        const durationSec = Math.round(durationMs / 1000);
+        toast.success(`Clip ${clipIndex} ready!`, {
+          description: `${words.length} words transcribed (${durationSec}s)`,
+        });
+
+        // Auto-detect filler words and suggest removal
+        const suggestedCount = get().suggestFillerWords();
+        if (suggestedCount > 0) {
+          toast(`Found ${suggestedCount} filler word${suggestedCount > 1 ? "s" : ""}`, {
+            description: "um, uh, like, you know...",
+            action: {
+              label: "Remove all",
+              onClick: () => {
+                const removed = get().applySuggestedCuts();
+                toast.success(`Removed ${removed} filler words`, {
+                  description: "Press Cmd+Z to undo",
+                });
+              },
+            },
+            duration: 10000, // Give user time to decide
+          });
+        }
       },
 
       deleteWord: (wordId: string) => {

@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextRequest } from "next/server";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { nanoid } from "nanoid";
 
 // Initialize clients
@@ -34,29 +35,41 @@ function buildImagePrompt(
   aspectRatio: string
 ): string {
   const styleDescriptions: Record<string, string> = {
-    photorealistic: "photorealistic, high-quality photography, natural lighting, sharp focus, professional",
-    illustration: "digital illustration, clean vector style, vibrant colors, modern art",
-    cinematic: "cinematic, movie still, dramatic lighting, film grain, anamorphic lens flare",
-    minimalist: "minimalist, clean, simple composition, lots of negative space, modern design",
-    abstract: "abstract art, creative interpretation, bold colors, geometric shapes, artistic",
+    photorealistic: "real photograph, stock photo style, natural lighting, taken with a professional camera, looks like a real photo from Getty Images or Shutterstock",
+    cinematic: "cinematic photograph, real photo with dramatic lighting, shallow depth of field, looks like a frame from a documentary or film",
+    minimalist: "clean real photograph, simple composition with negative space, modern and professional, real objects in real settings",
+    // Legacy styles - redirect to realistic versions
+    illustration: "real photograph, clean and modern, professional stock photo quality",
+    abstract: "real photograph with artistic composition, interesting angles, real objects photographed creatively",
   };
 
   const aspectDescriptions: Record<string, string> = {
-    "9:16": "vertical portrait orientation (9:16 aspect ratio), optimized for mobile viewing",
-    "16:9": "horizontal landscape orientation (16:9 aspect ratio), widescreen format",
-    "1:1": "square format (1:1 aspect ratio), balanced composition",
+    "9:16": "vertical/portrait orientation for mobile video",
+    "16:9": "horizontal/landscape orientation, widescreen",
+    "1:1": "square format",
   };
 
-  return `Generate a high-quality image: ${basePrompt}
+  // Extract the core subject from the prompt and make it concrete
+  return `Create a REALISTIC photograph for video B-roll.
 
-Visual Style: ${styleDescriptions[style] || styleDescriptions.photorealistic}
-Aspect Ratio: ${aspectDescriptions[aspectRatio] || aspectDescriptions["9:16"]}
+Subject: ${basePrompt}
 
-Requirements:
-- Professional quality suitable for video B-roll
-- No text, watermarks, or logos
-- Engaging visual composition
-- High resolution and sharp details`;
+CRITICAL REQUIREMENTS:
+1. This must look like a REAL PHOTOGRAPH - not AI art, not illustration, not conceptual
+2. Show REAL, TANGIBLE objects that actually exist - things you could photograph in real life
+3. Style: ${styleDescriptions[style] || styleDescriptions.photorealistic}
+4. Looks like professional stock footage you'd find on Shutterstock or Getty Images
+5. Natural, believable lighting - like a real camera captured this
+6. ${aspectDescriptions[aspectRatio] || aspectDescriptions["9:16"]}
+
+DO NOT:
+- Create surreal, futuristic, or fantasy imagery
+- Add glowing effects, neon, or sci-fi elements
+- Make abstract or conceptual art
+- Add any text, watermarks, or logos
+- Create anything that looks obviously AI-generated
+
+This B-roll will be inserted into a talking-head video, so it needs to look professional and realistic.`;
 }
 
 export async function POST(request: NextRequest) {
@@ -119,13 +132,19 @@ export async function POST(request: NextRequest) {
           })
         );
 
-        // Generate public URL
-        const region = process.env.REMOTION_AWS_REGION || "us-east-1";
-        const url = `https://${bucketName}.s3.${region}.amazonaws.com/${filePath}`;
+        // Generate a presigned URL for reading (valid for 7 days)
+        const signedUrl = await getSignedUrl(
+          s3Client,
+          new GetObjectCommand({
+            Bucket: bucketName,
+            Key: filePath,
+          }),
+          { expiresIn: 60 * 60 * 24 * 7 } // 7 days
+        );
 
         return Response.json({
           success: true,
-          url,
+          url: signedUrl,
           fileName,
           mimeType,
           prompt,
