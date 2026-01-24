@@ -35,6 +35,7 @@ export async function processFileUpload(
     const uploadInfo = presignData.uploads[0];
 
     // Step 2: Upload directly to S3 using presigned URL (bypasses Vercel's 4.5MB limit)
+    // Note: ACL is already included in the presigned URL signature, don't add header
     await axios.put(uploadInfo.presignedUrl, file, {
       headers: {
         "Content-Type": uploadInfo.contentType,

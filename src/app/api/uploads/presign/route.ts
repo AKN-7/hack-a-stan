@@ -53,6 +53,7 @@ export async function POST(request: NextRequest) {
           Bucket: BUCKET_NAME,
           Key: filePath,
           ContentType: contentType,
+          ACL: "public-read", // Allow Deepgram and other services to access the file
         });
 
         const presignedUrl = await getSignedUrl(s3Client, command, {

@@ -1,4 +1,8 @@
 import { S3Client, PutBucketCorsCommand } from "@aws-sdk/client-s3";
+import { config } from "dotenv";
+
+// Load environment variables from .env
+config();
 
 const client = new S3Client({
   region: "us-east-1",
