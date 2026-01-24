@@ -22,28 +22,43 @@ export async function processFileUpload(
   callbacks: UploadCallbacks
 ): Promise<any> {
   try {
-    const formData = new FormData();
-    formData.append("file", file);
+    // Step 1: Get presigned URL from our API (small request, no file data)
+    callbacks.onProgress(uploadId, 5);
+    const { data: presignData } = await axios.post("/api/uploads/presign", {
+      fileNames: [file.name],
+    });
 
-    const { data } = await axios.post("/api/uploads", formData, {
-      headers: { "Content-Type": "multipart/form-data" },
+    if (!presignData.success || !presignData.uploads?.[0]) {
+      throw new Error("Failed to get upload URL");
+    }
+
+    const uploadInfo = presignData.uploads[0];
+
+    // Step 2: Upload directly to S3 using presigned URL (bypasses Vercel's 4.5MB limit)
+    await axios.put(uploadInfo.presignedUrl, file, {
+      headers: {
+        "Content-Type": uploadInfo.contentType,
+      },
       onUploadProgress: (progressEvent) => {
-        const percent = Math.round(
-          (progressEvent.loaded * 100) / (progressEvent.total || 1)
+        // Map progress from 5-95% (reserving 0-5% for presign, 95-100% for completion)
+        const percent = 5 + Math.round(
+          (progressEvent.loaded * 90) / (progressEvent.total || 1)
         );
         callbacks.onProgress(uploadId, percent);
       },
     });
 
+    callbacks.onProgress(uploadId, 100);
+
     const uploadData = {
-      fileName: data.upload.fileName,
-      filePath: data.upload.filePath,
-      fileSize: data.upload.fileSize,
-      contentType: data.upload.contentType,
-      metadata: { uploadedUrl: data.upload.url },
+      fileName: file.name,
+      filePath: uploadInfo.filePath,
+      fileSize: file.size,
+      contentType: uploadInfo.contentType,
+      metadata: { uploadedUrl: uploadInfo.url },
       folder: null,
-      type: data.upload.contentType.split("/")[0],
-      method: "direct",
+      type: uploadInfo.contentType.split("/")[0],
+      method: "presigned",
       origin: "user",
       status: "uploaded",
       isPreview: false,
@@ -52,6 +67,7 @@ export async function processFileUpload(
     callbacks.onStatus(uploadId, "uploaded");
     return uploadData;
   } catch (error) {
+    console.error("Upload failed:", error);
     callbacks.onStatus(uploadId, "failed", (error as Error).message);
     throw error;
   }
