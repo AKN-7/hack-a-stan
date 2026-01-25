@@ -183,7 +183,7 @@ export const TranscriptVideo: React.FC<TranscriptVideoProps> = ({
                 width: "100%",
                 height: "100%",
                 objectFit: "cover",
-                transform: "scale(1.02)", // 2% zoom to hide edge shaking on jump cuts
+                transform: "scale(1.05)", // 5% zoom to hide edge shaking on jump cuts
               }}
             />
           </AbsoluteFill>
