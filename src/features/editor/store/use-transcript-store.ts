@@ -1,8 +1,21 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { toast } from "sonner";
+import { dispatch } from "@designcombo/events";
+import { ADD_TEXT } from "@designcombo/state";
+import { nanoid } from "nanoid";
 // NOTE: We no longer dispatch to DesignCombo for video clips.
 // The transcript store IS the source of truth.
+
+// Import effects store for smooth cuts (lazy to avoid circular deps)
+const getEffectsStore = () => import("./use-effects-store").then(m => m.default);
+
+// Get editor store for video dimensions (lazy to avoid circular deps)
+const getEditorStore = () => import("./use-store").then(m => m.default);
+
+// Debounce timer for auto-magic processing (wait for all clips to finish)
+let autoMagicDebounceTimer: NodeJS.Timeout | null = null;
+const AUTO_MAGIC_DEBOUNCE_MS = 2000; // Wait 2 seconds after last transcription
 
 // Word with timing and clip association
 export interface TranscriptWord {
@@ -31,6 +44,8 @@ export interface ClipTranscript {
   words: TranscriptWord[];
   text: string;
   trim?: ClipTrim;  // Optional trim boundaries
+  isDeleted?: boolean;  // Soft delete for clips (shows as grayed out, can restore)
+  deleteReason?: string;  // Why the clip was deleted (e.g., "Duplicate take - better version in Clip 3")
 }
 
 // Segment to cut from video
@@ -72,6 +87,22 @@ interface ITranscriptStore {
   gapThresholdMs: number;
   setGapThreshold: (ms: number) => void;
 
+  // Auto-magic processing state
+  autoProcessEnabled: boolean;
+  setAutoProcessEnabled: (enabled: boolean) => void;
+  isProcessing: boolean;
+  processingStatus: string;
+  _hasRunMagicProcessing: boolean; // Prevents running twice
+
+  // Auto-process when all clips are transcribed
+  _checkAndAutoProcess: () => void;
+  runMagicProcessing: () => Promise<{ fillerCount: number; aiCutsCount: number; clipsRemoved: number; timeSavedMs: number }>;
+  resetMagicProcessing: () => void; // Reset to allow running again
+
+  // Smart clip ordering based on content analysis
+  analyzeClipOrder: () => { suggestedOrder: string[]; confidence: number; reasoning: string };
+  applySmartOrder: () => void;
+
   // History for undo/redo
   _history: HistorySnapshot[];
   _historyIndex: number;
@@ -107,7 +138,9 @@ interface ITranscriptStore {
 
   // Actions
   addClip: (clipId: string, url: string) => void;
-  removeClip: (clipId: string) => void;
+  removeClip: (clipId: string, reason?: string) => void;  // Soft delete with optional reason
+  restoreClip: (clipId: string) => void;  // Restore a soft-deleted clip
+  hardRemoveClip: (clipId: string) => void;  // Permanently remove a clip
   reorderClips: (clipOrder: string[]) => void;
   trimClip: (clipId: string, startMs: number, endMs: number) => void;
   getClipDuration: (clipId: string) => number;
@@ -153,6 +186,14 @@ const useTranscriptStore = create<ITranscriptStore>()(
       clips: {},
       clipOrder: [],
       gapThresholdMs: 500,
+
+      // Auto-magic processing state
+      autoProcessEnabled: true, // Enabled by default!
+      setAutoProcessEnabled: (enabled: boolean) => set({ autoProcessEnabled: enabled }),
+      isProcessing: false,
+      processingStatus: "",
+      _hasRunMagicProcessing: false,
+      resetMagicProcessing: () => set({ _hasRunMagicProcessing: false }),
 
       // History state
       _history: [],
@@ -339,7 +380,8 @@ const useTranscriptStore = create<ITranscriptStore>()(
 
         for (const clipId of clipOrder) {
           const clip = clips[clipId];
-          if (!clip || clip.status !== "ready" || clip.words.length === 0) continue;
+          // Skip deleted clips, non-ready clips, or empty clips
+          if (!clip || clip.isDeleted || clip.status !== "ready" || clip.words.length === 0) continue;
 
           // Get trim boundaries (relative to clip's first word)
           const trimStart = clip.trim?.startMs ?? 0;
@@ -477,7 +519,48 @@ const useTranscriptStore = create<ITranscriptStore>()(
         }));
       },
 
-      removeClip: (clipId: string) => {
+      // Soft delete a clip (marks as deleted but keeps in store for restore)
+      removeClip: (clipId: string, reason?: string) => {
+        get()._pushHistory();
+        set((state) => {
+          const clip = state.clips[clipId];
+          if (!clip) return state;
+
+          return {
+            clips: {
+              ...state.clips,
+              [clipId]: {
+                ...clip,
+                isDeleted: true,
+                deleteReason: reason || "Removed by user",
+              },
+            },
+          };
+        });
+      },
+
+      // Restore a soft-deleted clip
+      restoreClip: (clipId: string) => {
+        get()._pushHistory();
+        set((state) => {
+          const clip = state.clips[clipId];
+          if (!clip) return state;
+
+          return {
+            clips: {
+              ...state.clips,
+              [clipId]: {
+                ...clip,
+                isDeleted: false,
+                deleteReason: undefined,
+              },
+            },
+          };
+        });
+      },
+
+      // Permanently remove a clip from the store
+      hardRemoveClip: (clipId: string) => {
         get()._pushHistory();
         set((state) => {
           const { [clipId]: removed, ...remainingClips } = state.clips;
@@ -556,9 +639,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
         // Show error notification if transcription failed
         if (status === "error") {
           const clipIndex = get().clipOrder.indexOf(clipId) + 1;
-          toast.error(`Clip ${clipIndex} failed to transcribe`, {
-            description: error || "Please try uploading again",
-          });
+          toast.error(`Clip ${clipIndex} failed to transcribe`);
         }
       },
 
@@ -579,27 +660,13 @@ const useTranscriptStore = create<ITranscriptStore>()(
         const clipIndex = get().clipOrder.indexOf(clipId) + 1;
         const durationMs = words.length > 0 ? words[words.length - 1].endMs - words[0].startMs : 0;
         const durationSec = Math.round(durationMs / 1000);
-        toast.success(`Clip ${clipIndex} ready!`, {
-          description: `${words.length} words transcribed (${durationSec}s)`,
-        });
+        toast.success(`Clip ${clipIndex} ready!`);
 
-        // Auto-detect filler words and suggest removal
-        const suggestedCount = get().suggestFillerWords();
-        if (suggestedCount > 0) {
-          toast(`Found ${suggestedCount} filler word${suggestedCount > 1 ? "s" : ""}`, {
-            description: "um, uh, like, you know...",
-            action: {
-              label: "Remove all",
-              onClick: () => {
-                const removed = get().applySuggestedCuts();
-                toast.success(`Removed ${removed} filler words`, {
-                  description: "Press Cmd+Z to undo",
-                });
-              },
-            },
-            duration: 10000, // Give user time to decide
-          });
-        }
+        // Check if we should auto-process (waits for ALL clips to be ready)
+        // This replaces the manual filler word suggestion with automatic processing
+        setTimeout(() => {
+          get()._checkAndAutoProcess();
+        }, 500); // Small delay to allow UI to update
       },
 
       deleteWord: (wordId: string) => {
@@ -761,21 +828,50 @@ const useTranscriptStore = create<ITranscriptStore>()(
 
       autoRemoveFillerWords: () => {
         get()._pushHistory();
-        // Common filler words to remove
+        // Comprehensive filler word patterns
         const fillerPatterns = [
+          // Verbal fillers (hesitation sounds)
           /^u+[hm]+$/i,      // um, uh, uhm, umm, etc.
           /^a+[hm]+$/i,      // ah, ahm, etc.
           /^e+[hm]+$/i,      // eh, ehm, etc.
           /^m+[hm]+$/i,      // mm, mmm, mhm, etc.
           /^h+[m]+$/i,       // hm, hmm, etc.
+          /^er+$/i,          // er, err, errr
+          /^uh+$/i,          // uh, uhh, uhhh
+
+          // Common discourse markers (when used as fillers)
           /^like$/i,         // "like" as filler
-          /^you know$/i,     // "you know"
           /^basically$/i,    // "basically"
           /^actually$/i,     // "actually" (often filler)
+          /^literally$/i,    // "literally"
+          /^honestly$/i,     // "honestly"
+          /^frankly$/i,      // "frankly"
+
+          // Sentence starters used as fillers
           /^so+$/i,          // "so", "sooo" at start
+          /^well$/i,         // "well" as filler
+          /^now$/i,          // "now" as filler (context dependent)
+
+          // Agreement/acknowledgment fillers
           /^right\??$/i,     // "right?" as filler
           /^okay$/i,         // "okay" as filler
+          /^ok$/i,           // "ok"
           /^yeah$/i,         // "yeah" as filler
+          /^yep$/i,          // "yep"
+          /^sure$/i,         // "sure" as filler
+
+          // Hedging phrases
+          /^kind of$/i,      // "kind of"
+          /^sort of$/i,      // "sort of"
+          /^kinda$/i,        // "kinda"
+          /^sorta$/i,        // "sorta"
+
+          // Phrases (matched as sequences in context)
+          /^i mean$/i,       // "I mean"
+          /^you know$/i,     // "you know"
+          /^you see$/i,      // "you see"
+          /^i guess$/i,      // "I guess"
+          /^i think$/i,      // "I think" (when used as filler)
         ];
 
         let removedCount = 0;
@@ -812,21 +908,50 @@ const useTranscriptStore = create<ITranscriptStore>()(
 
       suggestFillerWords: () => {
         get()._pushHistory();
-        // Common filler words to suggest for removal
+        // Comprehensive filler word patterns (same as autoRemoveFillerWords)
         const fillerPatterns = [
+          // Verbal fillers (hesitation sounds)
           /^u+[hm]+$/i,      // um, uh, uhm, umm, etc.
           /^a+[hm]+$/i,      // ah, ahm, etc.
           /^e+[hm]+$/i,      // eh, ehm, etc.
           /^m+[hm]+$/i,      // mm, mmm, mhm, etc.
           /^h+[m]+$/i,       // hm, hmm, etc.
+          /^er+$/i,          // er, err, errr
+          /^uh+$/i,          // uh, uhh, uhhh
+
+          // Common discourse markers (when used as fillers)
           /^like$/i,         // "like" as filler
-          /^you know$/i,     // "you know"
           /^basically$/i,    // "basically"
           /^actually$/i,     // "actually" (often filler)
+          /^literally$/i,    // "literally"
+          /^honestly$/i,     // "honestly"
+          /^frankly$/i,      // "frankly"
+
+          // Sentence starters used as fillers
           /^so+$/i,          // "so", "sooo" at start
+          /^well$/i,         // "well" as filler
+          /^now$/i,          // "now" as filler (context dependent)
+
+          // Agreement/acknowledgment fillers
           /^right\??$/i,     // "right?" as filler
           /^okay$/i,         // "okay" as filler
+          /^ok$/i,           // "ok"
           /^yeah$/i,         // "yeah" as filler
+          /^yep$/i,          // "yep"
+          /^sure$/i,         // "sure" as filler
+
+          // Hedging phrases
+          /^kind of$/i,      // "kind of"
+          /^sort of$/i,      // "sort of"
+          /^kinda$/i,        // "kinda"
+          /^sorta$/i,        // "sorta"
+
+          // Phrases (matched as sequences in context)
+          /^i mean$/i,       // "I mean"
+          /^you know$/i,     // "you know"
+          /^you see$/i,      // "you see"
+          /^i guess$/i,      // "I guess"
+          /^i think$/i,      // "I think" (when used as filler)
         ];
 
         let suggestedCount = 0;
@@ -1028,8 +1153,448 @@ const useTranscriptStore = create<ITranscriptStore>()(
         }
       },
 
+      // Check if all clips are transcribed and auto-process if enabled
+      // Uses debouncing to wait for ALL clips to finish before running once
+      _checkAndAutoProcess: () => {
+        const { clips, clipOrder, autoProcessEnabled, isProcessing, _hasRunMagicProcessing, runMagicProcessing } = get();
+
+        // Don't process if disabled, already processing, or already ran
+        if (!autoProcessEnabled || isProcessing || _hasRunMagicProcessing) return;
+
+        // Need at least one clip
+        if (clipOrder.length === 0) return;
+
+        // Check if ALL clips are ready (not pending or transcribing)
+        const allReady = clipOrder.every(clipId => {
+          const clip = clips[clipId];
+          return clip && clip.status === "ready";
+        });
+
+        // Check if any clips are still transcribing
+        const anyTranscribing = clipOrder.some(clipId => {
+          const clip = clips[clipId];
+          return clip && (clip.status === "pending" || clip.status === "transcribing");
+        });
+
+        // Clear any existing debounce timer
+        if (autoMagicDebounceTimer) {
+          clearTimeout(autoMagicDebounceTimer);
+          autoMagicDebounceTimer = null;
+        }
+
+        // Only start debounce timer when all clips are ready
+        if (allReady && !anyTranscribing) {
+          console.log(`[Auto-Magic] All ${clipOrder.length} clips ready - waiting ${AUTO_MAGIC_DEBOUNCE_MS}ms to ensure no more clips incoming...`);
+
+          // Debounce: wait a bit to make sure no more clips are coming
+          autoMagicDebounceTimer = setTimeout(() => {
+            // Double-check we're still ready and not processing
+            const currentState = get();
+            if (currentState.isProcessing) {
+              console.log(`[Auto-Magic] Already processing, skipping`);
+              return;
+            }
+
+            // Verify all clips are still ready (state might have changed)
+            const stillAllReady = currentState.clipOrder.every(clipId => {
+              const clip = currentState.clips[clipId];
+              return clip && clip.status === "ready";
+            });
+
+            if (stillAllReady && currentState.clipOrder.length > 0) {
+              console.log(`[Auto-Magic] Starting magic processing for ${currentState.clipOrder.length} clips...`);
+              runMagicProcessing();
+            }
+          }, AUTO_MAGIC_DEBOUNCE_MS);
+        }
+      },
+
+      // Run the full magic processing pipeline
+      runMagicProcessing: async () => {
+        const { clips, clipOrder, autoRemoveFillerWords, setGapThreshold, deleteWords, removeClip, reorderClips } = get();
+
+        // Don't run if no clips
+        if (clipOrder.length === 0) return { fillerCount: 0, aiCutsCount: 0, clipsRemoved: 0, timeSavedMs: 0 };
+
+        // Set processing state and mark as having run (prevents running twice)
+        set({ isProcessing: true, processingStatus: "Starting magic processing...", _hasRunMagicProcessing: true });
+
+        const durationBefore = get().getTotalDurationMs();
+        let aiCutsCount = 0;
+        let clipsRemoved = 0;
+        let aiSuggestedOrder: string[] | null = null;
+        let aiReasoning = "";
+
+        try {
+          // Step 1: Remove basic filler words (um, uh, like, etc.)
+          set({ processingStatus: "Removing filler words..." });
+          const fillerCount = autoRemoveFillerWords();
+          console.log(`[Auto-Magic] Removed ${fillerCount} filler words`);
+
+          // Step 2: AI-powered CROSS-TRANSCRIPT analysis
+          // This is where the magic happens - AI sees ALL clips together and makes decisions about:
+          // - Which entire clips to remove (bad takes)
+          // - Which words/phrases to cut (duplicates, stammering, false starts)
+          // - Optimal clip ordering for narrative flow
+          set({ processingStatus: "AI analyzing all clips for cross-transcript optimization..." });
+          try {
+            // Build clip data for AI analysis - include ALL clips
+            const clipData = clipOrder.map((clipId, index) => {
+              const clip = clips[clipId];
+              const activeWords = clip.words.filter(w => !w.isDeleted);
+              return {
+                clipId,
+                clipIndex: index + 1,
+                text: activeWords.map(w => w.text).join(" "),
+                words: activeWords.map(w => ({
+                  id: w.id,
+                  text: w.text,
+                  startMs: w.startMs,
+                  endMs: w.endMs,
+                })),
+              };
+            });
+
+            // Call AI analysis API with all clips
+            console.log("[Auto-Magic] Sending clips to AI for analysis:", clipData.map(c => ({
+              clipId: c.clipId,
+              clipIndex: c.clipIndex,
+              wordCount: c.words.length,
+              preview: c.text.substring(0, 100),
+            })));
+
+            const response = await fetch("/api/analyze-cuts", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ clips: clipData }),
+            });
+
+            if (!response.ok) {
+              const errorText = await response.text();
+              console.error("[Auto-Magic] AI API error:", response.status, errorText);
+              throw new Error(`AI analysis failed: ${response.status}`);
+            }
+
+            const result = await response.json();
+            console.log("[Auto-Magic] AI analysis result:", {
+              suggestedOrder: result.suggestedOrder,
+              clipsToRemove: result.clipsToRemove,
+              wordCutsCount: result.wordCuts?.length || 0,
+              wordIdsToDelete: result.wordIdsToDelete?.length || 0,
+              reasoning: result.reasoning,
+            });
+
+            if (result.success) {
+
+              // Step 2a: Remove entire clips that AI identified as bad takes
+              if (result.clipsToRemove && result.clipsToRemove.length > 0) {
+                set({ processingStatus: `Removing ${result.clipsToRemove.length} duplicate/bad takes...` });
+                for (const clipIdToRemove of result.clipsToRemove) {
+                  // Verify the clip exists before removing
+                  if (get().clips[clipIdToRemove]) {
+                    // Get clip index for a nice reason message
+                    const clipIndex = clipOrder.indexOf(clipIdToRemove) + 1;
+                    const reason = `AI detected: duplicate take (better version exists in another clip)`;
+                    removeClip(clipIdToRemove, reason);
+                    clipsRemoved++;
+                    console.log(`[Auto-Magic] Removed clip ${clipIndex} - ${clipIdToRemove} (bad take)`);
+                  }
+                }
+              }
+
+              // Step 2b: Delete specific words (duplicates, stammering, false starts)
+              if (result.wordIdsToDelete && result.wordIdsToDelete.length > 0) {
+                set({ processingStatus: `Cutting ${result.wordIdsToDelete.length} duplicate/stammer words...` });
+                deleteWords(result.wordIdsToDelete);
+                aiCutsCount = result.wordIdsToDelete.length;
+                console.log(`[Auto-Magic] AI cut ${aiCutsCount} words across ${result.wordCuts?.length || 0} sections`);
+                result.wordCuts?.forEach((cut: any) => {
+                  console.log(`  - Clip ${cut.clipId}: "${cut.text}" (${cut.reason})`);
+                });
+              }
+
+              // Step 2c: Store AI's suggested order for later application
+              if (result.suggestedOrder && result.suggestedOrder.length > 0) {
+                aiSuggestedOrder = result.suggestedOrder;
+                aiReasoning = result.reasoning || "AI-optimized narrative flow";
+              }
+
+              // Step 2d: Add text hook overlay if AI generated one
+              if (result.textHook && result.textHook.length > 0) {
+                set({ processingStatus: "Adding attention-grabbing text hook..." });
+                try {
+                  const editorStore = await getEditorStore();
+                  const { size } = editorStore.getState();
+                  const hookId = nanoid();
+
+                  // Text hook appears in the first 4 seconds
+                  const hookDurationMs = 4000;
+
+                  const hookPayload = {
+                    id: hookId,
+                    type: "text",
+                    display: { from: 0, to: hookDurationMs },
+                    details: {
+                      text: result.textHook,
+                      fontSize: 64,
+                      fontFamily: "Inter-Bold",
+                      color: "#ffffff",
+                      backgroundColor: "transparent",
+                      textAlign: "center",
+                      width: size.width * 0.9,
+                      height: 200,
+                      top: size.height * 0.08,
+                      left: (size.width - size.width * 0.9) / 2,
+                      wordWrap: "break-word",
+                      borderWidth: 0,
+                      borderColor: "#000000",
+                      boxShadow: { color: "#000000", x: 3, y: 3, blur: 12 },
+                      textTransform: "uppercase",
+                    },
+                  };
+
+                  dispatch(ADD_TEXT, { payload: hookPayload, options: {} });
+                  console.log(`[Auto-Magic] Added text hook: "${result.textHook}"`);
+                } catch (hookError) {
+                  console.warn("[Auto-Magic] Could not add text hook:", hookError);
+                }
+              }
+            }
+          } catch (aiError) {
+            console.warn("[Auto-Magic] AI analysis failed, continuing with basic processing:", aiError);
+          }
+
+          // Step 3: Optimize pacing (set gap threshold)
+          set({ processingStatus: "Optimizing pacing..." });
+          setGapThreshold(500); // Standard pacing
+
+          // Step 4: Enable smooth jump cuts via effects store
+          set({ processingStatus: "Enabling smooth cuts..." });
+          try {
+            const effectsStore = await getEffectsStore();
+            effectsStore.getState().setSegmentZoom({
+              enabled: true,
+              amount: 1.05, // 5% zoom
+              pattern: "alternate",
+            });
+            console.log(`[Auto-Magic] Enabled smooth jump cuts`);
+          } catch (e) {
+            console.warn("[Auto-Magic] Could not enable smooth cuts:", e);
+          }
+
+          // Step 5: Apply AI-suggested clip order (if provided)
+          if (aiSuggestedOrder && aiSuggestedOrder.length > 0) {
+            set({ processingStatus: "Applying AI-optimized clip order..." });
+            // Filter to only include clips that still exist (some may have been removed)
+            const currentClips = get().clips;
+            const validOrder = aiSuggestedOrder.filter(id => currentClips[id] !== undefined);
+
+            // Check if order actually changes
+            const currentOrder = get().clipOrder;
+            const hasChanges = validOrder.some((id, i) => id !== currentOrder[i]);
+
+            if (hasChanges && validOrder.length > 0) {
+              reorderClips(validOrder);
+              console.log(`[Auto-Magic] Applied AI-suggested order: ${validOrder.join(" → ")}`);
+              console.log(`[Auto-Magic] Reasoning: ${aiReasoning}`);
+            }
+          }
+
+          // Calculate results
+          const durationAfter = get().getTotalDurationMs();
+          const timeSavedMs = durationBefore - durationAfter;
+
+          // Show success toast with comprehensive summary
+          const totalWordsCut = fillerCount + aiCutsCount;
+          const timeSavedSec = (timeSavedMs / 1000).toFixed(1);
+
+          if (totalWordsCut > 0 || clipsRemoved > 0 || timeSavedMs > 0) {
+            const parts: string[] = [];
+            if (clipsRemoved > 0) parts.push(`${clipsRemoved} bad takes removed`);
+            if (aiCutsCount > 0) parts.push(`${aiCutsCount} AI-detected cuts`);
+            if (fillerCount > 0) parts.push(`${fillerCount} filler words`);
+
+            toast.success(
+              `✨ Magic complete! ${parts.join(", ")}. Saved ${timeSavedSec}s`,
+              { duration: 6000 }
+            );
+          } else {
+            toast.success("✨ Magic complete! Your video looks clean already.", { duration: 3000 });
+          }
+
+          console.log(`[Auto-Magic] Complete! Clips removed: ${clipsRemoved}, Words cut: ${totalWordsCut}, Time saved: ${timeSavedSec}s`);
+
+          set({ isProcessing: false, processingStatus: "" });
+
+          return {
+            fillerCount,
+            aiCutsCount,
+            clipsRemoved,
+            timeSavedMs,
+          };
+        } catch (error) {
+          console.error("[Auto-Magic] Processing failed:", error);
+          set({ isProcessing: false, processingStatus: "" });
+          toast.error("Magic processing encountered an error");
+          return { fillerCount: 0, aiCutsCount: 0, clipsRemoved: 0, timeSavedMs: 0 };
+        }
+      },
+
+      // Analyze clips and suggest optimal order based on content
+      analyzeClipOrder: () => {
+        const { clips, clipOrder } = get();
+
+        if (clipOrder.length < 2) {
+          return { suggestedOrder: clipOrder, confidence: 1, reasoning: "Only one clip" };
+        }
+
+        // Score each clip for intro/middle/outro characteristics
+        const clipScores: Array<{
+          clipId: string;
+          introScore: number;
+          outroScore: number;
+          orderHints: number[];
+          text: string;
+        }> = [];
+
+        // Intro patterns (higher score = more likely intro)
+        const introPatterns = [
+          /\b(hey|hi|hello|welcome)\b/i,
+          /\b(today|in this video)\b/i,
+          /\b(going to|gonna) (show|teach|explain|talk)/i,
+          /\b(let's|let me) (start|begin|get into|dive)/i,
+          /\bintro(duction)?\b/i,
+        ];
+
+        // Outro patterns (higher score = more likely outro)
+        const outroPatterns = [
+          /\b(thanks? (for|you)|thank you)\b/i,
+          /\b(that's (it|all)|so that's)\b/i,
+          /\b(in (conclusion|summary)|to (sum|wrap) up)\b/i,
+          /\b(see you|catch you|bye|goodbye)\b/i,
+          /\b(subscribe|like|comment|share)\b/i,
+          /\b(hope (this|you)|hopefully)\b/i,
+        ];
+
+        // Order keywords with their position hints
+        const orderKeywords: Array<{ pattern: RegExp; position: number }> = [
+          { pattern: /\b(first(ly)?|to start|starting with)\b/i, position: 1 },
+          { pattern: /\b(second(ly)?|next|moving on)\b/i, position: 2 },
+          { pattern: /\b(third(ly)?|then|after that)\b/i, position: 3 },
+          { pattern: /\b(fourth(ly)?|additionally)\b/i, position: 4 },
+          { pattern: /\b(fifth(ly)?|also)\b/i, position: 5 },
+          { pattern: /\b(finally|lastly|last(ly)?|in the end)\b/i, position: 100 },
+        ];
+
+        for (const clipId of clipOrder) {
+          const clip = clips[clipId];
+          const text = clip?.text || clip?.words.filter(w => !w.isDeleted).map(w => w.text).join(" ") || "";
+          const textLower = text.toLowerCase();
+
+          let introScore = 0;
+          let outroScore = 0;
+          const orderHints: number[] = [];
+
+          // Check intro patterns
+          for (const pattern of introPatterns) {
+            if (pattern.test(textLower)) introScore++;
+          }
+
+          // Check outro patterns
+          for (const pattern of outroPatterns) {
+            if (pattern.test(textLower)) outroScore++;
+          }
+
+          // Check order keywords
+          for (const { pattern, position } of orderKeywords) {
+            if (pattern.test(textLower)) orderHints.push(position);
+          }
+
+          clipScores.push({ clipId, introScore, outroScore, orderHints, text: text.substring(0, 100) });
+        }
+
+        // Determine suggested order
+        const suggestedOrder: string[] = [];
+        const remaining = [...clipScores];
+
+        // Find best intro clip
+        const introClip = remaining.reduce((best, clip) =>
+          clip.introScore > best.introScore ? clip : best
+        , remaining[0]);
+
+        if (introClip.introScore > 0) {
+          suggestedOrder.push(introClip.clipId);
+          remaining.splice(remaining.findIndex(c => c.clipId === introClip.clipId), 1);
+        }
+
+        // Find best outro clip
+        const outroClip = remaining.reduce((best, clip) =>
+          clip.outroScore > best.outroScore ? clip : best
+        , remaining[0]);
+
+        // Sort remaining by order hints, then by original position
+        const middle = remaining
+          .filter(c => c.clipId !== outroClip?.clipId || outroClip.outroScore === 0)
+          .sort((a, b) => {
+            const aHint = Math.min(...a.orderHints, 50);
+            const bHint = Math.min(...b.orderHints, 50);
+            if (aHint !== bHint) return aHint - bHint;
+            return clipOrder.indexOf(a.clipId) - clipOrder.indexOf(b.clipId);
+          });
+
+        suggestedOrder.push(...middle.map(c => c.clipId));
+
+        // Add outro at the end if found
+        if (outroClip && outroClip.outroScore > 0 && !suggestedOrder.includes(outroClip.clipId)) {
+          suggestedOrder.push(outroClip.clipId);
+        }
+
+        // Ensure all clips are included
+        for (const clipId of clipOrder) {
+          if (!suggestedOrder.includes(clipId)) {
+            suggestedOrder.push(clipId);
+          }
+        }
+
+        // Calculate confidence
+        const hasChanges = suggestedOrder.some((id, i) => id !== clipOrder[i]);
+        const totalHints = clipScores.reduce((sum, c) => sum + c.introScore + c.outroScore + c.orderHints.length, 0);
+        const confidence = hasChanges ? Math.min(0.9, 0.3 + (totalHints * 0.1)) : 0.5;
+
+        const reasoning = hasChanges
+          ? `Detected ${introClip.introScore > 0 ? "intro content" : ""}${outroClip.outroScore > 0 ? ", outro content" : ""}, and ordering keywords`
+          : "No clear ordering signals detected - keeping original order";
+
+        return { suggestedOrder, confidence, reasoning };
+      },
+
+      // Apply the smart order analysis
+      applySmartOrder: () => {
+        const { analyzeClipOrder, reorderClips, clipOrder } = get();
+        const { suggestedOrder, confidence, reasoning } = analyzeClipOrder();
+
+        // Only apply if we have reasonable confidence and there are changes
+        const hasChanges = suggestedOrder.some((id, i) => id !== clipOrder[i]);
+
+        if (hasChanges && confidence >= 0.4) {
+          reorderClips(suggestedOrder);
+          toast.success(`Reordered ${clipOrder.length} clips based on content`, {
+            description: reasoning,
+            duration: 5000,
+          });
+          console.log(`[Smart Order] Applied new order with ${(confidence * 100).toFixed(0)}% confidence: ${reasoning}`);
+        } else {
+          console.log(`[Smart Order] Kept original order: ${reasoning}`);
+        }
+      },
+
       reset: () => {
-        set({ clips: {}, clipOrder: [] });
+        // Clear debounce timer if any
+        if (autoMagicDebounceTimer) {
+          clearTimeout(autoMagicDebounceTimer);
+          autoMagicDebounceTimer = null;
+        }
+        set({ clips: {}, clipOrder: [], isProcessing: false, processingStatus: "", _hasRunMagicProcessing: false });
       },
     }),
     {

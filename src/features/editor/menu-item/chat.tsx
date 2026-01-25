@@ -26,7 +26,8 @@ import {
   Search,
   X,
   Play,
-  Clock
+  Clock,
+  Trash2
 } from "lucide-react";
 import { MessageMarkdown } from "@/components/message-markdown";
 import { ShimmeringText } from "@/components/ui/shimmering-text";
@@ -523,13 +524,26 @@ export function Chat() {
               style={{ minHeight: '1.5rem' }}
             />
             <div className="flex items-center justify-between -mx-1">
-              <button
-                type="button"
-                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground"
-                aria-label="Attach file"
-              >
-                <Paperclip className="h-4 w-4" />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground"
+                  aria-label="Attach file"
+                >
+                  <Paperclip className="h-4 w-4" />
+                </button>
+                {messages.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearMessages}
+                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-opacity hover:bg-red-50 hover:text-red-500"
+                    aria-label="Clear conversation"
+                    title="Clear conversation"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
               <button
                 type="submit"
                 disabled={!input.trim() || isLoading}

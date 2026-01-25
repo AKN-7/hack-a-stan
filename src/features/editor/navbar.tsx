@@ -9,6 +9,15 @@ import {
   PopoverTrigger
 } from "@/components/ui/popover";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
   ChevronDown,
   Download,
   ProportionsIcon
@@ -48,9 +57,15 @@ export default function Navbar({
   const isMediumScreen = useIsMediumScreen();
   const isSmallScreen = useIsSmallScreen();
 
-  // Get transcript undo/redo functions
-  const { undo: transcriptUndo, redo: transcriptRedo, canUndo, canRedo } = useTranscriptStore();
+  // Get transcript undo/redo functions and reset
+  const { undo: transcriptUndo, redo: transcriptRedo, canUndo, canRedo, reset: resetTranscript } = useTranscriptStore();
   const { playerRef, fps } = useStore();
+  const [showResetDialog, setShowResetDialog] = useState(false);
+
+  const handleReset = useCallback(() => {
+    resetTranscript();
+    setShowResetDialog(false);
+  }, [resetTranscript]);
 
   const handleUndo = useCallback(() => {
     // Try transcript undo first (since it's the primary editing mode)
@@ -173,9 +188,29 @@ export default function Navbar({
       <DownloadProgressModal />
 
       <div className="flex items-center gap-3">
-        <div className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-white shadow-sm">
-          <LogoIcons.scenify />
-        </div>
+        <Dialog open={showResetDialog} onOpenChange={setShowResetDialog}>
+          <DialogTrigger asChild>
+            <button className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-white shadow-sm hover:bg-primary/90 transition-colors cursor-pointer">
+              <LogoIcons.scenify />
+            </button>
+          </DialogTrigger>
+          <DialogContent showCloseButton={false}>
+            <DialogHeader>
+              <DialogTitle>Start a new project?</DialogTitle>
+              <DialogDescription>
+                This will clear all your current clips and edits. You'll be taken back to the upload screen to start fresh.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowResetDialog(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleReset} className="bg-red-500 hover:bg-red-600 text-white">
+                Clear & Start Over
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <div className="pointer-events-auto flex h-9 items-center gap-1 rounded-lg bg-muted px-1">
           <Button

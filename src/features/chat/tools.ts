@@ -924,6 +924,104 @@ const analysisTools: Tool[] = [
 
 const enhancementTools: Tool[] = [
   {
+    name: "smart_reorder_clips",
+    description:
+      "Use AI to intelligently reorder video clips based on content flow and narrative structure. Analyzes all transcript text to determine the optimal order. Use this when the user uploads multiple clips and you need to arrange them in a logical sequence. The AI reads all transcripts and determines the best order based on: topic progression, time references (first, then, finally), logical flow, and content coherence.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        strategy: {
+          type: "string",
+          enum: ["narrative", "chronological", "thematic", "energy"],
+          description: "'narrative' (default) orders for story flow, 'chronological' follows time references, 'thematic' groups related topics, 'energy' builds from calm to exciting.",
+        },
+        preserveFirst: {
+          type: "boolean",
+          description: "If true, keep the first clip in place (useful for intros). Default: false",
+        },
+        preserveLast: {
+          type: "boolean",
+          description: "If true, keep the last clip in place (useful for outros). Default: false",
+        },
+      },
+    },
+  },
+  {
+    name: "detect_stammering",
+    description:
+      "Detect stammering patterns (word repetitions like 'the the', stutters like 'w-w-word', and repeated phrases) in the transcript. Use 'suggest' mode to preview what would be removed, or 'apply' to automatically remove them.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        mode: {
+          type: "string",
+          enum: ["suggest", "apply", "review"],
+          description: "'suggest' marks for review, 'apply' immediately deletes, 'review' shows current suggestions.",
+        },
+        includeRepeatedPhrases: {
+          type: "boolean",
+          description: "Also detect repeated 3+ word phrases within 5 seconds. Default: true",
+        },
+        sensitivity: {
+          type: "string",
+          enum: ["low", "medium", "high"],
+          description: "'low' catches only obvious duplicates, 'medium' (default) catches most stammers, 'high' is aggressive.",
+        },
+      },
+      required: ["mode"],
+    },
+  },
+  {
+    name: "trim_silence",
+    description:
+      "Automatically trim silence/dead air from the beginning and end of clips, and optionally remove long pauses between words. This cleans up the pacing of the video.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        trimStartEnd: {
+          type: "boolean",
+          description: "Trim silence at the very start and end of each clip. Default: true",
+        },
+        maxPauseMs: {
+          type: "number",
+          description: "Maximum pause duration between words (longer pauses are trimmed). Default: 800ms. Set to 0 to disable internal pause trimming.",
+        },
+        clipId: {
+          type: "string",
+          description: "Optional: only process a specific clip",
+        },
+      },
+    },
+  },
+  {
+    name: "magic_process",
+    description:
+      "The ULTIMATE one-click magic button for the 15-video upload scenario. Processes ALL uploaded clips in one go: 1) Removes all filler words (um, uh, like, etc.), 2) Removes stammering/duplicates, 3) Trims silence at boundaries, 4) AI-reorders clips for optimal flow, 5) Adds smooth jump cuts, 6) Applies professional captions. Use this when users want the complete 'magic moment' experience of uploading raw footage and getting a polished video.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        intensity: {
+          type: "string",
+          enum: ["light", "standard", "aggressive"],
+          description: "'light' only removes obvious fillers, 'standard' (default) applies all enhancements moderately, 'aggressive' maximizes cuts for tightest edit.",
+        },
+        reorderClips: {
+          type: "boolean",
+          description: "Whether to AI-reorder clips based on content. Default: true",
+        },
+        captionStyle: {
+          type: "string",
+          enum: ["tiktok-bold", "hormozi-style", "cinematic-white", "minimal-clean", "none"],
+          description: "Caption style to apply. Use 'none' to skip captions. Default: 'tiktok-bold'",
+        },
+        addTransitions: {
+          type: "boolean",
+          description: "Add crossfade transitions between clips. Default: true",
+        },
+      },
+    },
+  },
+  {
     name: "smooth_jump_cuts",
     description:
       "Apply subtle zoom effects to video segments to smooth jump cuts and make edits less jarring. This alternates zoom levels between segments so cuts appear as intentional style rather than abrupt jumps. Essential for professional-looking talking head videos.",
@@ -1001,15 +1099,15 @@ export const editorTools: Tool[] = [
 
 // Tool categories for reference
 export const toolCategories = {
-  transcript: ["delete_words", "restore_words", "smart_cuts", "reorder_clips", "trim_clip", "get_transcript", "get_project_status", "undo", "redo"],
+  transcript: ["delete_words", "restore_words", "edit_text", "smart_cuts", "reorder_clips", "trim_clip", "get_transcript", "get_project_status", "undo", "redo"],
   navigation: ["seek_to", "set_playback_rate"],
-  textOverlay: ["add_text_overlay", "edit_text_overlay", "remove_element"],
+  textOverlay: ["add_text_overlay", "edit_text_overlay", "remove_element", "smart_add_text"],
   captions: ["apply_caption_preset", "customize_caption_style", "highlight_keywords"],
   generation: ["generate_broll_image", "generate_video_clip", "extend_video", "video_to_video"],
   audio: ["add_audio_visualization", "adjust_audio"],
   effects: ["apply_transition", "apply_video_filter", "add_shape"],
   analysis: ["analyze_transcript", "suggest_broll_moments", "find_key_moments"],
-  enhancement: ["smooth_jump_cuts", "auto_enhance"],
+  enhancement: ["smooth_jump_cuts", "auto_enhance", "smart_reorder_clips", "detect_stammering", "trim_silence", "magic_process"],
 };
 
 // Helper type for tool inputs

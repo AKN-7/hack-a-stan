@@ -87,6 +87,17 @@ ${context.overlayElements && context.overlayElements.length > 0
 
 **IMPORTANT**: To remove any overlay element, use the \`remove_element\` tool with the element's ID shown above.
 
+## ⚡ MAGIC MOMENT - One-Click Polish
+
+When users upload multiple clips and want them cleaned up automatically, use **magic_process** - the ultimate one-click tool that:
+1. Removes ALL filler words (um, uh, like, basically, actually, literally, etc.)
+2. Removes stammering and duplicate words (the the, I I, repeated phrases)
+3. Trims silence at clip boundaries
+4. Enables smooth jump cuts (alternating zoom effect)
+5. Applies professional caption styling
+
+After magic_process, consider calling **smart_reorder_clips** to let AI analyze all transcripts and arrange clips in the optimal narrative order.
+
 ## Your Comprehensive Toolset
 
 ### 📝 TRANSCRIPT EDITING
@@ -136,6 +147,14 @@ ${context.overlayElements && context.overlayElements.length > 0
 - **suggest_broll_moments**: Find opportunities for visual cutaways
 - **find_key_moments**: Identify hooks, climax, quotes for social clips
 
+### ✨ ENHANCEMENT & AUTO-EDIT
+- **magic_process** ⭐ THE ULTIMATE TOOL: Complete auto-processing for multi-clip uploads. Removes filler words, stammering, trims silence, enables smooth cuts, applies captions. Use this when users upload multiple raw clips.
+- **smart_reorder_clips**: AI analyzes ALL transcripts and determines optimal narrative order based on content flow
+- **detect_stammering**: Find and remove word repetitions ("the the"), stutters ("w-w-word"), repeated phrases
+- **trim_silence**: Remove dead air at clip boundaries and long internal pauses
+- **smooth_jump_cuts**: Apply subtle zoom to alternate segments for professional jump cuts
+- **auto_enhance**: Quick polish (filler removal + smooth cuts + optional captions)
+
 ### 🧭 NAVIGATION & CONTROL
 - **seek_to**: Jump to timestamp or find a phrase in transcript
 - **get_transcript**: Retrieve transcript (text-only, with timing, or full)
@@ -150,6 +169,13 @@ ${context.overlayElements && context.overlayElements.length > 0
 3. **Smart defaults**: Tools have sensible defaults - don't over-specify
 
 ### Common Workflows
+
+**⭐ The Magic Moment (Multi-Clip Upload)**
+When users upload multiple raw clips and want them polished:
+1. Call \`magic_process(intensity:"standard")\` - removes fillers, stammers, trims silence
+2. Call \`smart_reorder_clips(strategy:"narrative")\` to analyze content
+3. Call \`reorder_clips(newOrder:[...])\` with the AI-suggested order
+4. Result: Professional, well-paced video from raw footage!
 
 **Clean Up Audio**
 1. Use \`smart_cuts\` with targets: ["filler-words"] to remove ums/uhs
@@ -185,7 +211,10 @@ ${context.overlayElements && context.overlayElements.length > 0
 
 | User Says | Tool to Use |
 |-----------|-------------|
+| "Clean up these clips" / "Make it good" | magic_process(intensity:"standard") ⭐ |
+| "Put these in the right order" | smart_reorder_clips(strategy:"narrative") |
 | "Remove all the ums" | smart_cuts(mode:"apply", targets:["filler-words"]) |
+| "Remove the stammering/duplicates" | detect_stammering(mode:"apply") |
 | "Delete where I said 'basically'" | delete_words(query:"basically", matchType:"exact") |
 | "Make captions pop more" | apply_caption_preset(preset:"tiktok-bold") |
 | "Add a title saying X" | add_text_overlay(text:"X", style:"title") |
@@ -193,7 +222,14 @@ ${context.overlayElements && context.overlayElements.length > 0
 | "Make this look cinematic" | video_to_video(effect:"cinematic-grade") |
 | "What's the video length?" | get_project_status() |
 | "Go to where I talk about X" | seek_to(phrase:"X") |
-| "Undo" | undo() |`;
+| "Undo" | undo() |
+
+### 🎯 The 15-Video Magic Moment Flow
+When a user uploads multiple clips and wants them transformed into one polished video:
+1. First, call \`magic_process(intensity:"standard")\` - this removes fillers, stammers, trims silence, adds smooth cuts
+2. Then call \`smart_reorder_clips(strategy:"narrative")\` - AI will analyze all transcripts
+3. Based on the clip analysis, call \`reorder_clips(newOrder:[...])\` with the optimal order
+4. Result: Clean, well-paced, logically-ordered video with professional polish!`;
 }
 
 export async function POST(request: NextRequest) {

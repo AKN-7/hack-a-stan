@@ -21,11 +21,20 @@ function formatTime(ms: number): string {
   return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
 }
 
-// Filler word patterns
+// Comprehensive filler word patterns
 const FILLER_WORDS = [
-  "um", "uh", "uhh", "umm", "er", "ah", "ahh",
-  "like", "you know", "basically", "actually", "literally",
-  "so", "right", "okay", "ok", "yeah", "well", "i mean"
+  // Verbal fillers (hesitation sounds)
+  "um", "uh", "uhh", "umm", "er", "ah", "ahh", "eh", "mm", "hmm", "mhm",
+  // Common discourse markers
+  "like", "basically", "actually", "literally", "honestly", "frankly",
+  // Sentence starters used as fillers
+  "so", "well", "now",
+  // Agreement/acknowledgment fillers
+  "right", "okay", "ok", "yeah", "yep", "sure",
+  // Hedging phrases
+  "kind of", "sort of", "kinda", "sorta",
+  // Phrases
+  "i mean", "you know", "you see", "i guess", "i think"
 ];
 
 // Caption preset mapping - maps friendly names to preset indices
@@ -302,9 +311,7 @@ export async function executeToolCall(
               ? deletedText.substring(0, 100) + "..."
               : deletedText;
 
-            toast.success(`Deleted ${toDelete.length} word(s)`, {
-              description: `Saved ${timeSavedSec}s · Press Cmd+Z to undo`,
-            });
+            toast.success(`Deleted ${toDelete.length} word(s)`);
 
             return {
               success: true,
@@ -364,9 +371,7 @@ export async function executeToolCall(
           const timeSavedMs = durationBefore - durationAfter;
           const timeSavedSec = (timeSavedMs / 1000).toFixed(1);
 
-          toast.success(`Deleted ${toDelete.length} word(s)`, {
-            description: `Saved ${timeSavedSec}s · Press Cmd+Z to undo`,
-          });
+          toast.success(`Deleted ${toDelete.length} word(s)`);
           return {
             success: true,
             result: {
@@ -491,9 +496,7 @@ export async function executeToolCall(
             const timeSavedSec = (timeSavedMs / 1000).toFixed(1);
 
             if (count > 0) {
-              toast.success(`Removed ${count} filler word(s)`, {
-                description: `Saved ${timeSavedSec}s · um, uh, like...`,
-              });
+              toast.success(`Removed ${count} filler word(s)`);
             }
             return {
               success: true,
@@ -962,9 +965,7 @@ export async function executeToolCall(
           options: {},
         });
 
-        toast.success("Text overlay added", {
-          description: `At ${formatTime(from)} - "${text.substring(0, 30)}${text.length > 30 ? "..." : ""}"`,
-        });
+        toast.success("Text overlay added");
 
         return {
           success: true,
@@ -1340,9 +1341,7 @@ export async function executeToolCall(
         }
 
         if (appliedCount > 0) {
-          toast.success(`Caption style applied`, {
-            description: `"${preset}" preset`,
-          });
+          toast.success(`Caption style applied`);
         }
 
         return {
@@ -1664,9 +1663,7 @@ export async function executeToolCall(
           console.log(`[B-roll] Updated Zustand store directly. trackItemIds now has ${currentState.trackItemIds.length + 1} items`);
 
           const placementLabel = placement === "fullscreen" ? "cutaway" : `${placement} overlay`;
-          toast.success(`B-roll added (${placementLabel})`, {
-            description: `At ${formatTime(safeInsertAt)} - "${transcriptContext?.substring(0, 30) || prompt.substring(0, 30)}..."`,
-          });
+          toast.success(`B-roll added (${placementLabel})`);
 
           return {
             success: true,
@@ -2196,6 +2193,374 @@ export async function executeToolCall(
       // ========================================================================
       // ENHANCEMENT & AUTO-EDIT TOOLS
       // ========================================================================
+
+      case "smart_reorder_clips": {
+        const { strategy, preserveFirst, preserveLast } = toolInput as {
+          strategy?: "narrative" | "chronological" | "thematic" | "energy";
+          preserveFirst?: boolean;
+          preserveLast?: boolean;
+        };
+
+        const clips = transcriptStore.clips;
+        const clipOrder = transcriptStore.clipOrder;
+
+        if (clipOrder.length < 2) {
+          return {
+            success: false,
+            result: "Need at least 2 clips to reorder",
+            error: "Not enough clips",
+          };
+        }
+
+        // Build transcript summaries for each clip
+        const clipData = clipOrder.map((clipId, index) => {
+          const clip = clips[clipId];
+          const text = clip?.text || clip?.words.filter(w => !w.isDeleted).map(w => w.text).join(" ") || "";
+          return {
+            clipId,
+            index: index + 1,
+            text: text.substring(0, 500), // First 500 chars for context
+            wordCount: clip?.words.filter(w => !w.isDeleted).length || 0,
+          };
+        });
+
+        // The AI will use this data to determine order - return info for Claude to process
+        // In practice, Claude sees all transcripts in the system prompt and can call reorder_clips
+        // This tool provides a structured way to request intelligent reordering
+
+        const analysisPrompt = `Analyze these ${clipData.length} clips and determine the optimal order based on "${strategy || 'narrative'}" strategy:\n\n` +
+          clipData.map(c => `Clip ${c.index} (${c.wordCount} words): "${c.text}..."`).join("\n\n");
+
+        return {
+          success: true,
+          result: {
+            message: `Ready to reorder ${clipData.length} clips using "${strategy || 'narrative'}" strategy. Analyzing content flow...`,
+            clips: clipData,
+            currentOrder: clipOrder,
+            strategy: strategy || "narrative",
+            preserveFirst: preserveFirst || false,
+            preserveLast: preserveLast || false,
+            instruction: "Based on the clip transcripts above, determine the optimal order and call reorder_clips with the newOrder array.",
+          },
+        };
+      }
+
+      case "detect_stammering": {
+        const { mode, includeRepeatedPhrases, sensitivity } = toolInput as {
+          mode: "suggest" | "apply" | "review";
+          includeRepeatedPhrases?: boolean;
+          sensitivity?: "low" | "medium" | "high";
+        };
+
+        const words = transcriptStore.getUnifiedTranscript();
+        const activeWords = words.filter(w => !w.isDeleted);
+        const toProcess: string[] = [];
+        const stammers: Array<{ wordId: string; text: string; type: string; context: string }> = [];
+
+        // Sensitivity thresholds
+        const sensitivityMs = {
+          low: 2000,    // Within 2 seconds
+          medium: 3000, // Within 3 seconds
+          high: 5000,   // Within 5 seconds
+        };
+        const timeWindow = sensitivityMs[sensitivity || "medium"];
+
+        // Detect word repetitions (the the, I I, we we)
+        for (let i = 1; i < activeWords.length; i++) {
+          const prevWord = activeWords[i - 1];
+          const currWord = activeWords[i];
+
+          // Skip if from different clips or too far apart
+          if (prevWord.clipId !== currWord.clipId) continue;
+          if (currWord.startMs - prevWord.endMs > timeWindow) continue;
+
+          const prevText = prevWord.text.toLowerCase().replace(/[.,!?]/g, "");
+          const currText = currWord.text.toLowerCase().replace(/[.,!?]/g, "");
+
+          // Exact duplicate word
+          if (prevText === currText && prevText.length > 1) {
+            stammers.push({
+              wordId: currWord.id, // Remove the duplicate (second occurrence)
+              text: currWord.text,
+              type: "duplicate",
+              context: `"${prevWord.text} ${currWord.text}"`,
+            });
+          }
+
+          // Stutter pattern (w-w-word, th-th-the)
+          if (currText.includes("-")) {
+            const parts = currText.split("-");
+            if (parts.length >= 2 && parts[0] === parts[1]) {
+              stammers.push({
+                wordId: currWord.id,
+                text: currWord.text,
+                type: "stutter",
+                context: `"${currWord.text}"`,
+              });
+            }
+          }
+        }
+
+        // Detect repeated phrases (3+ words repeated within time window)
+        if (includeRepeatedPhrases !== false) {
+          const phraseWindow = 3; // Look for 3-word phrases
+          for (let i = 0; i < activeWords.length - phraseWindow * 2; i++) {
+            const phrase1 = activeWords.slice(i, i + phraseWindow).map(w => w.text.toLowerCase()).join(" ");
+
+            for (let j = i + phraseWindow; j < Math.min(i + 20, activeWords.length - phraseWindow); j++) {
+              const phrase2 = activeWords.slice(j, j + phraseWindow).map(w => w.text.toLowerCase()).join(" ");
+
+              // Check time window
+              const timeDiff = activeWords[j].startMs - activeWords[i + phraseWindow - 1].endMs;
+              if (timeDiff > timeWindow) break;
+
+              if (phrase1 === phrase2) {
+                // Mark the second occurrence for removal
+                for (let k = j; k < j + phraseWindow; k++) {
+                  stammers.push({
+                    wordId: activeWords[k].id,
+                    text: activeWords[k].text,
+                    type: "repeated-phrase",
+                    context: `"${phrase1}" repeated`,
+                  });
+                }
+                j += phraseWindow; // Skip ahead
+              }
+            }
+          }
+        }
+
+        // Remove duplicates from stammers array
+        const uniqueStammers = stammers.filter((s, idx, arr) =>
+          arr.findIndex(x => x.wordId === s.wordId) === idx
+        );
+
+        if (mode === "apply") {
+          if (uniqueStammers.length > 0) {
+            const durationBefore = transcriptStore.getTotalDurationMs();
+            transcriptStore.deleteWords(uniqueStammers.map(s => s.wordId));
+            const durationAfter = transcriptStore.getTotalDurationMs();
+            const timeSavedMs = durationBefore - durationAfter;
+
+            toast.success(`Removed ${uniqueStammers.length} stammer(s)`);
+            return {
+              success: true,
+              result: {
+                message: `Removed ${uniqueStammers.length} stammering instance(s)`,
+                removedCount: uniqueStammers.length,
+                timeSavedMs,
+                types: {
+                  duplicates: uniqueStammers.filter(s => s.type === "duplicate").length,
+                  stutters: uniqueStammers.filter(s => s.type === "stutter").length,
+                  repeatedPhrases: uniqueStammers.filter(s => s.type === "repeated-phrase").length,
+                },
+              },
+            };
+          }
+          return {
+            success: true,
+            result: { message: "No stammering detected", removedCount: 0 },
+          };
+        }
+
+        // For suggest/review mode
+        return {
+          success: true,
+          result: {
+            message: `Found ${uniqueStammers.length} stammering instance(s)`,
+            count: uniqueStammers.length,
+            stammers: uniqueStammers.slice(0, 20), // Show first 20
+            types: {
+              duplicates: uniqueStammers.filter(s => s.type === "duplicate").length,
+              stutters: uniqueStammers.filter(s => s.type === "stutter").length,
+              repeatedPhrases: uniqueStammers.filter(s => s.type === "repeated-phrase").length,
+            },
+          },
+        };
+      }
+
+      case "trim_silence": {
+        const { trimStartEnd, maxPauseMs, clipId } = toolInput as {
+          trimStartEnd?: boolean;
+          maxPauseMs?: number;
+          clipId?: string;
+        };
+
+        const shouldTrimStartEnd = trimStartEnd !== false;
+        const maxPause = maxPauseMs ?? 800;
+        let totalTrimmedMs = 0;
+        let trimmedClips = 0;
+
+        const clipsToProcess = clipId
+          ? [clipId].filter(id => transcriptStore.clips[id])
+          : transcriptStore.clipOrder;
+
+        for (const cid of clipsToProcess) {
+          const clip = transcriptStore.clips[cid];
+          if (!clip || clip.status !== "ready" || clip.words.length === 0) continue;
+
+          const activeWords = clip.words.filter(w => !w.isDeleted);
+          if (activeWords.length === 0) continue;
+
+          const firstWord = activeWords[0];
+          const lastWord = activeWords[activeWords.length - 1];
+          const clipBaseTime = clip.words[0]?.startMs ?? 0;
+
+          if (shouldTrimStartEnd) {
+            // Trim start: if there's significant silence before first word
+            const silenceAtStart = firstWord.startMs - clipBaseTime;
+            // Trim end: calculate from last word's end to estimated clip end
+
+            if (silenceAtStart > 500) { // More than 500ms silence at start
+              transcriptStore.trimClip(cid, silenceAtStart - 100, Infinity); // Keep 100ms buffer
+              totalTrimmedMs += silenceAtStart - 100;
+              trimmedClips++;
+            }
+          }
+
+          // Internal pause trimming is handled by the gap threshold setting
+          if (maxPause > 0 && maxPause !== transcriptStore.gapThresholdMs) {
+            // Update gap threshold to affect segment calculation
+            transcriptStore.setGapThreshold(maxPause);
+          }
+        }
+
+        return {
+          success: true,
+          result: {
+            message: `Trimmed silence from ${trimmedClips} clip(s)`,
+            trimmedClips,
+            totalTrimmedMs,
+            gapThreshold: maxPause,
+          },
+        };
+      }
+
+      case "magic_process": {
+        const { intensity, reorderClips, captionStyle, addTransitions } = toolInput as {
+          intensity?: "light" | "standard" | "aggressive";
+          reorderClips?: boolean;
+          captionStyle?: string;
+          addTransitions?: boolean;
+        };
+
+        const effectsStore = useEffectsStore.getState();
+        const level = intensity || "standard";
+        const results: string[] = [];
+        let totalTimeSaved = 0;
+
+        // Get initial duration
+        const durationBefore = transcriptStore.getTotalDurationMs();
+
+        // 1. Remove filler words
+        const fillerCount = transcriptStore.autoRemoveFillerWords();
+        if (fillerCount > 0) {
+          results.push(`Removed ${fillerCount} filler words (um, uh, like, etc.)`);
+        }
+
+        // 2. Detect and remove stammering
+        const words = transcriptStore.getUnifiedTranscript();
+        const activeWords = words.filter(w => !w.isDeleted);
+        const stammers: string[] = [];
+
+        // Simple duplicate detection
+        for (let i = 1; i < activeWords.length; i++) {
+          const prevWord = activeWords[i - 1];
+          const currWord = activeWords[i];
+
+          if (prevWord.clipId !== currWord.clipId) continue;
+          if (currWord.startMs - prevWord.endMs > 3000) continue;
+
+          const prevText = prevWord.text.toLowerCase().replace(/[.,!?]/g, "");
+          const currText = currWord.text.toLowerCase().replace(/[.,!?]/g, "");
+
+          if (prevText === currText && prevText.length > 1) {
+            stammers.push(currWord.id);
+          }
+        }
+
+        if (stammers.length > 0) {
+          transcriptStore.deleteWords(stammers);
+          results.push(`Removed ${stammers.length} stammering duplicates`);
+        }
+
+        // 3. Trim silence (adjust gap threshold based on intensity)
+        const gapThresholds = {
+          light: 800,
+          standard: 500,
+          aggressive: 300,
+        };
+        transcriptStore.setGapThreshold(gapThresholds[level]);
+        results.push(`Set pacing to ${level} (${gapThresholds[level]}ms gap threshold)`);
+
+        // 4. Calculate time saved
+        const durationAfter = transcriptStore.getTotalDurationMs();
+        totalTimeSaved = durationBefore - durationAfter;
+
+        // 5. Enable smooth jump cuts
+        const zoomAmounts = {
+          light: 1.03,
+          standard: 1.05,
+          aggressive: 1.08,
+        };
+        effectsStore.setSegmentZoom({
+          enabled: true,
+          amount: zoomAmounts[level],
+          pattern: "alternate",
+        });
+        results.push(`Enabled smooth jump cuts (${((zoomAmounts[level] - 1) * 100).toFixed(0)}% zoom)`);
+
+        // 6. Apply captions if requested
+        if (captionStyle !== "none") {
+          const style = captionStyle || "tiktok-bold";
+          const presetIndex = CAPTION_PRESET_MAP[style] ?? 1;
+          const presetConfig = STYLE_CAPTION_PRESETS[presetIndex];
+
+          if (presetConfig) {
+            const { trackItemsMap } = editorStore;
+            const groupedCaptions = groupCaptionItems(trackItemsMap);
+
+            let appliedCount = 0;
+            for (const sourceUrl in groupedCaptions) {
+              const captions = groupedCaptions[sourceUrl];
+              const captionIds = captions.map((c: { id: string }) => c.id);
+              await applyPreset(presetConfig, captionIds, captions);
+              appliedCount += captionIds.length;
+            }
+
+            if (appliedCount > 0) {
+              results.push(`Applied "${style}" caption style`);
+            } else {
+              results.push(`Caption style "${style}" ready (will apply to generated captions)`);
+            }
+          }
+        }
+
+        // 7. Note about reordering
+        if (reorderClips !== false && transcriptStore.clipOrder.length > 1) {
+          results.push(`${transcriptStore.clipOrder.length} clips ready for AI reordering - call smart_reorder_clips to optimize flow`);
+        }
+
+        // Show toast
+        toast.success(`Magic processing complete!`);
+
+        return {
+          success: true,
+          result: {
+            message: `Magic processing complete! (${level} intensity)`,
+            intensity: level,
+            actions: results,
+            timeSavedMs: totalTimeSaved,
+            timeSavedSeconds: (totalTimeSaved / 1000).toFixed(1),
+            originalDurationMs: durationBefore,
+            newDurationMs: durationAfter,
+            clipCount: transcriptStore.clipOrder.length,
+            suggestion: reorderClips !== false && transcriptStore.clipOrder.length > 1
+              ? "Consider calling smart_reorder_clips to optimize clip order based on content"
+              : undefined,
+          },
+        };
+      }
 
       case "smooth_jump_cuts": {
         const { enabled, zoomAmount, pattern } = toolInput as {

@@ -49,6 +49,14 @@ export async function POST(request: Request) {
       utterances: true,
       punctuate: true,
       diarize: false,
+      // Keywords boost recognition of specific terms
+      keywords: [
+        "Stan store:5",
+        "Stan:3",
+        "B-roll:3",
+        "creator:2",
+        "creators:2",
+      ],
     };
 
     let result: any;

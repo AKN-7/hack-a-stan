@@ -53,6 +53,7 @@ export const Transcript = () => {
     getWordAtTime,
     reorderClips,
     removeClip,
+    restoreClip,
   } = useTranscriptStore();
   const [currentWordId, setCurrentWordId] = useState<string | null>(null);
 
@@ -362,85 +363,134 @@ export const Transcript = () => {
             }, 0);
 
             const color = getClipColor(index);
+            const isClipDeleted = clip.isDeleted;
 
             return (
-              <div key={clipId} className="border-b border-border last:border-b-0">
+              <div key={clipId} className={cn(
+                "border-b border-border last:border-b-0 transition-all duration-300",
+                isClipDeleted && "opacity-60 bg-red-50/50"
+              )}>
                 {/* Clip Header */}
                 <div className={cn(
-                  "flex items-center gap-3 px-4 py-3 sticky top-0 z-10 bg-white border-b border-border/50",
+                  "flex items-center gap-3 px-4 py-3 sticky top-0 z-10 border-b border-border/50",
+                  isClipDeleted ? "bg-red-50" : "bg-white"
                 )}>
                   {/* Color indicator dot */}
-                  <div className={cn("w-3 h-3 rounded-full shadow-sm", color.bg)} />
-
-                  <span className="text-sm font-semibold text-foreground flex-1">
-                    Clip {index + 1}
-                  </span>
+                  <div className={cn(
+                    "w-3 h-3 rounded-full shadow-sm",
+                    isClipDeleted ? "bg-red-400" : color.bg
+                  )} />
 
                   <span className={cn(
-                    "text-xs font-medium px-2 py-0.5 rounded-md",
-                    color.light, color.text
+                    "text-sm font-semibold flex-1",
+                    isClipDeleted ? "text-red-700 line-through" : "text-foreground"
                   )}>
-                    {formatDuration(clipDurationMs)}
+                    Clip {index + 1}
+                    {isClipDeleted && (
+                      <span className="ml-2 text-xs font-normal text-red-500 no-underline">
+                        (removed)
+                      </span>
+                    )}
                   </span>
 
-                  {/* Reorder Buttons */}
-                  <div className="flex gap-0.5">
+                  {!isClipDeleted && (
+                    <span className={cn(
+                      "text-xs font-medium px-2 py-0.5 rounded-md",
+                      color.light, color.text
+                    )}>
+                      {formatDuration(clipDurationMs)}
+                    </span>
+                  )}
+
+                  {/* Restore button for deleted clips */}
+                  {isClipDeleted ? (
                     <Button
                       variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 rounded-lg hover:bg-muted"
-                      disabled={index === 0}
-                      onClick={() => {
-                        const newOrder = [...clipOrder];
-                        [newOrder[index - 1], newOrder[index]] = [newOrder[index], newOrder[index - 1]];
-                        reorderClips(newOrder);
-                      }}
+                      size="sm"
+                      className="h-7 px-3 text-xs font-medium text-green-600 hover:text-green-700 hover:bg-green-50 rounded-lg"
+                      onClick={() => restoreClip(clipId)}
                     >
-                      <ChevronUp className="h-4 w-4" />
+                      <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                      Restore
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 rounded-lg hover:bg-muted"
-                      disabled={index === clipOrder.length - 1}
-                      onClick={() => {
-                        const newOrder = [...clipOrder];
-                        [newOrder[index], newOrder[index + 1]] = [newOrder[index + 1], newOrder[index]];
-                        reorderClips(newOrder);
-                      }}
-                    >
-                      <ChevronDown className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 rounded-lg text-muted-foreground hover:text-red-500 hover:bg-red-50"
-                      onClick={() => removeClip(clipId)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
+                  ) : (
+                    /* Reorder Buttons */
+                    <div className="flex gap-0.5">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 rounded-lg hover:bg-muted"
+                        disabled={index === 0}
+                        onClick={() => {
+                          const newOrder = [...clipOrder];
+                          [newOrder[index - 1], newOrder[index]] = [newOrder[index], newOrder[index - 1]];
+                          reorderClips(newOrder);
+                        }}
+                      >
+                        <ChevronUp className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 rounded-lg hover:bg-muted"
+                        disabled={index === clipOrder.length - 1}
+                        onClick={() => {
+                          const newOrder = [...clipOrder];
+                          [newOrder[index], newOrder[index + 1]] = [newOrder[index + 1], newOrder[index]];
+                          reorderClips(newOrder);
+                        }}
+                      >
+                        <ChevronDown className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 rounded-lg text-muted-foreground hover:text-red-500 hover:bg-red-50"
+                        onClick={() => removeClip(clipId)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  )}
                 </div>
 
+                {/* Delete reason if available */}
+                {isClipDeleted && clip.deleteReason && (
+                  <div className="px-4 py-2 bg-red-50 border-b border-red-100">
+                    <p className="text-xs text-red-600 italic">
+                      {clip.deleteReason}
+                    </p>
+                  </div>
+                )}
+
                 {/* Clip Words */}
-                <div className="px-4 py-3 select-none">
-                  <p className="text-sm leading-8" style={{ wordWrap: "break-word", overflowWrap: "break-word" }}>
+                <div className={cn(
+                  "px-4 py-3 select-none",
+                  isClipDeleted && "pointer-events-none"
+                )}>
+                  <p className={cn(
+                    "text-sm leading-8",
+                    isClipDeleted && "line-through text-red-700/70"
+                  )} style={{ wordWrap: "break-word", overflowWrap: "break-word" }}>
                     {clipWords.map((word) => (
                       <span
                         key={word.id}
                         ref={(el) => {
                           if (el) wordRefs.current.set(word.id, el);
                         }}
-                        onClick={(e) => handleWordClick(word, e)}
+                        onClick={(e) => !isClipDeleted && handleWordClick(word, e)}
                         className={cn(
-                          "cursor-pointer rounded px-0.5 py-0.5 transition-colors duration-100 inline",
-                          word.isDeleted
+                          "rounded px-0.5 py-0.5 transition-colors duration-100 inline",
+                          isClipDeleted
+                            ? "cursor-default"
+                            : "cursor-pointer",
+                          !isClipDeleted && word.isDeleted
                             ? "line-through opacity-50 bg-red-100 text-red-700"
-                            : currentWordId === word.id
+                            : !isClipDeleted && currentWordId === word.id
                             ? "bg-primary text-white font-medium"
-                            : selectedWordIds.has(word.id)
+                            : !isClipDeleted && selectedWordIds.has(word.id)
                             ? cn(color.light, color.text, "font-medium")
-                            : "hover:bg-muted"
+                            : !isClipDeleted && "hover:bg-muted"
                         )}
                       >
                         {word.text}{" "}

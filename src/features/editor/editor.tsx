@@ -23,6 +23,8 @@ import { Transcript } from "./menu-item/transcript";
 import { design } from "./mock";
 import { ChevronLeft, ChevronRight, FileText, Sparkles } from "lucide-react";
 import { Chat } from "./menu-item/chat";
+import useTranscriptStore from "./store/use-transcript-store";
+import UploadLanding from "./upload-landing";
 
 const stateManager = new StateManager({
 	size: {
@@ -38,6 +40,13 @@ const Editor = ({ tempId, id }: { tempId?: string; id?: string }) => {
 	const timelinePanelRef = useRef<ImperativePanelHandle>(null);
 	const sceneRef = useRef<SceneRef>(null);
 	const { timeline, playerRef, trackItemsMap } = useStore();
+
+	// Check if we have any clips (show editor as soon as clips are added, even if transcribing)
+	const { clipOrder } = useTranscriptStore();
+	const hasAnyClips = clipOrder.length > 0;
+
+	// Show landing only when no clips at all - transcription progress shows in sidebar
+	const showLanding = !hasAnyClips;
 
 	useTimelineEvents();
 	useStateManagerEvents(stateManager);
@@ -127,6 +136,11 @@ const Editor = ({ tempId, id }: { tempId?: string; id?: string }) => {
 		window.addEventListener("resize", onResize);
 		return () => window.removeEventListener("resize", onResize);
 	}, [timeline]);
+
+	// Progressive disclosure: show simple upload screen when no content
+	if (showLanding) {
+		return <UploadLanding />;
+	}
 
 	return (
 		<div className="flex h-screen w-screen flex-col bg-background">
