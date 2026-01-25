@@ -9,6 +9,7 @@ import {
 } from "remotion";
 import { calculateSegmentFrames } from "../features/editor/utils/segment-frames";
 import { Captions, Caption } from "./Captions";
+import { TransitionSeries, linearTiming, fade } from "../features/editor/player/transitions";
 
 // Schema for render segments
 const renderSegmentSchema = z.object({
@@ -62,12 +63,20 @@ const textOverlaySchema = z.object({
 
 export type TextOverlay = z.infer<typeof textOverlaySchema>;
 
+// Schema for transition settings
+const transitionSettingsSchema = z.object({
+  enabled: z.boolean(),
+  type: z.enum(["fade", "crossfade", "slide", "none"]),
+  durationMs: z.number(),
+});
+
 // Schema for the TranscriptVideo composition
 export const transcriptVideoSchema = z.object({
   segments: z.array(renderSegmentSchema),
   durationMs: z.number(),
   captions: z.array(captionSchema).optional(),
   textOverlays: z.array(textOverlaySchema).optional(),
+  transitionSettings: transitionSettingsSchema.optional(),
 });
 
 export type TranscriptVideoProps = z.infer<typeof transcriptVideoSchema>;
@@ -139,6 +148,7 @@ export const TranscriptVideo: React.FC<TranscriptVideoProps> = ({
   segments,
   captions = [],
   textOverlays = [],
+  transitionSettings,
 }) => {
   const { fps } = useVideoConfig();
 
@@ -165,30 +175,77 @@ export const TranscriptVideo: React.FC<TranscriptVideoProps> = ({
     [segments, fps]
   );
 
+  // Calculate transition frames
+  const transitionFrames = useMemo(() => {
+    if (!transitionSettings?.enabled || transitionSettings.type === "none") return 0;
+    return Math.round((transitionSettings.durationMs / 1000) * fps);
+  }, [transitionSettings, fps]);
+
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
-      {/* Video segments */}
-      {segmentFrames.map(({ segment, startFrame, durationInFrames, videoStartFrame, videoEndFrame }, index) => (
-        <Sequence
-          key={`${segment.clipId}-${index}`}
-          from={startFrame}
-          durationInFrames={durationInFrames}
-        >
-          <AbsoluteFill>
-            <OffthreadVideo
-              src={segment.clipUrl}
-              startFrom={videoStartFrame}
-              endAt={videoEndFrame}
-              style={{
-                width: "100%",
-                height: "100%",
-                objectFit: "cover",
-                transform: "scale(1.05)", // 5% zoom to hide edge shaking on jump cuts
-              }}
-            />
-          </AbsoluteFill>
-        </Sequence>
-      ))}
+      {/* Video segments with optional cross-dissolve transitions */}
+      {transitionFrames > 0 && segmentFrames.length > 1 ? (
+        <TransitionSeries>
+          {segmentFrames.flatMap(({ segment, durationInFrames, videoStartFrame, videoEndFrame }, index) => {
+            const elements: React.ReactNode[] = [
+              <TransitionSeries.Sequence
+                key={`seq-${segment.clipId}-${index}`}
+                durationInFrames={durationInFrames}
+              >
+                <AbsoluteFill>
+                  <OffthreadVideo
+                    src={segment.clipUrl}
+                    startFrom={videoStartFrame}
+                    endAt={videoEndFrame}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                      transform: "scale(1.05)",
+                    }}
+                  />
+                </AbsoluteFill>
+              </TransitionSeries.Sequence>
+            ];
+
+            // Add transition after each segment except the last
+            if (index < segmentFrames.length - 1) {
+              elements.push(
+                <TransitionSeries.Transition
+                  key={`trans-${index}`}
+                  presentation={fade()}
+                  timing={linearTiming({ durationInFrames: transitionFrames })}
+                />
+              );
+            }
+
+            return elements;
+          })}
+        </TransitionSeries>
+      ) : (
+        // Standard rendering without transitions
+        segmentFrames.map(({ segment, startFrame, durationInFrames, videoStartFrame, videoEndFrame }, index) => (
+          <Sequence
+            key={`${segment.clipId}-${index}`}
+            from={startFrame}
+            durationInFrames={durationInFrames}
+          >
+            <AbsoluteFill>
+              <OffthreadVideo
+                src={segment.clipUrl}
+                startFrom={videoStartFrame}
+                endAt={videoEndFrame}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  transform: "scale(1.05)",
+                }}
+              />
+            </AbsoluteFill>
+          </Sequence>
+        ))
+      )}
 
       {/* Text overlays */}
       {textOverlays.length > 0 && (

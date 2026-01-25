@@ -86,6 +86,7 @@ export async function POST(request: Request) {
       captions,
       design,
       options,
+      transitionSettings,
     } = body;
 
     // Extract text overlays from design
@@ -138,6 +139,8 @@ export async function POST(request: Request) {
         textOverlays,
         // Design props (for overlays like text, captions)
         design,
+        // Transition settings for cross-dissolve smoothing
+        transitionSettings: transitionSettings ?? { enabled: false, type: "fade", durationMs: 150 },
       },
       // Override duration if using transcript segments
       ...(durationInFrames ? { durationInFrames } : {}),

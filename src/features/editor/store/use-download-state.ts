@@ -1,6 +1,7 @@
 import { IDesign } from "@designcombo/types";
 import { create } from "zustand";
 import useTranscriptStore from "./use-transcript-store";
+import useEffectsStore from "./use-effects-store";
 
 interface Output {
   url: string;
@@ -61,6 +62,10 @@ export const useDownloadState = create<DownloadState>((set, get) => ({
         const totalDurationMs = transcriptStore.getTotalDurationMs();
         const captions = transcriptStore.getCaptionsForRender();
 
+        // Get transition settings for cross-dissolve smoothing
+        const effectsStore = useEffectsStore.getState();
+        const transitionSettings = effectsStore.transitions;
+
         // Step 1: POST request to start rendering
         const response = await fetch(`/api/render`, {
           method: "POST",
@@ -79,6 +84,8 @@ export const useDownloadState = create<DownloadState>((set, get) => ({
             transcriptDurationMs: renderSegments.length > 0 ? totalDurationMs : undefined,
             // Include captions mapped to output timeline
             captions: captions.length > 0 ? captions : undefined,
+            // Include transition settings for cross-dissolve smoothing
+            transitionSettings,
           })
         });
 

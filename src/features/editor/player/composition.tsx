@@ -4,11 +4,13 @@ import { dispatch, filter, subject } from "@designcombo/events";
 import { EDIT_OBJECT, ENTER_EDIT_MODE } from "@designcombo/state";
 import { groupTrackItems } from "../utils/track-items";
 import { TransitionSeries, Transitions } from "@designcombo/transitions";
+import { TransitionSeries as VideoTransitionSeries, linearTiming, fade } from "./transitions";
 import { calculateTextHeight } from "../utils/text";
 import { calculateSegmentFrames } from "../utils/segment-frames";
 import { AbsoluteFill, Sequence, Video, useCurrentFrame, prefetch } from "remotion";
 import useStore from "../store/use-store";
 import useTranscriptStore from "../store/use-transcript-store";
+import useEffectsStore from "../store/use-effects-store";
 
 const Composition = () => {
   const [editableTextId, setEditableTextId] = useState<string | null>(null);
@@ -33,6 +35,13 @@ const Composition = () => {
   // Get transcript-based render segments (now reactive to clips changes)
   const renderSegments = useMemo(() => getRenderSegments(), [clips, clipOrder, getRenderSegments]);
   const hasTranscriptData = renderSegments.length > 0;
+
+  // Get transition settings for cross-dissolve smoothing
+  const transitions = useEffectsStore((state) => state.transitions);
+  const transitionFrames = useMemo(() => {
+    if (!transitions.enabled || transitions.type === "none") return 0;
+    return Math.round((transitions.durationMs / 1000) * fps);
+  }, [transitions.enabled, transitions.type, transitions.durationMs, fps]);
 
   // Get captions (3 words at a time)
   const captions = useMemo(() => getCaptionsForRender(), [clips, clipOrder, getCaptionsForRender]);
@@ -274,31 +283,73 @@ const Composition = () => {
 
   return (
     <>
-      {/* Transcript-driven video rendering - NO zoom effects to prevent shakiness */}
+      {/* Transcript-driven video rendering with optional cross-dissolve transitions */}
       {hasTranscriptData && (
         <AbsoluteFill style={{ backgroundColor: "#000" }}>
-          {segmentFrames.map(({ segment, startFrame, durationInFrames, videoStartFrame, videoEndFrame }, index) => (
-            <Sequence
-              key={`transcript-${segment.clipId}-${index}`}
-              from={startFrame}
-              durationInFrames={durationInFrames}
-              premountFor={fps}
-            >
-              <AbsoluteFill style={{ overflow: "hidden" }}>
-                <Video
-                  src={segment.clipUrl}
-                  startFrom={videoStartFrame}
-                  endAt={videoEndFrame}
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover",
-                    transform: "scale(1.05)", // 5% zoom to hide edge shaking on jump cuts
-                  }}
-                />
-              </AbsoluteFill>
-            </Sequence>
-          ))}
+          {transitionFrames > 0 && segmentFrames.length > 1 ? (
+            // Use TransitionSeries for smooth cross-dissolve between segments
+            <VideoTransitionSeries>
+              {segmentFrames.flatMap(({ segment, durationInFrames, videoStartFrame, videoEndFrame }, index) => {
+                const elements: React.ReactNode[] = [
+                  <VideoTransitionSeries.Sequence
+                    key={`seq-${segment.clipId}-${index}`}
+                    durationInFrames={durationInFrames}
+                  >
+                    <AbsoluteFill style={{ overflow: "hidden" }}>
+                      <Video
+                        src={segment.clipUrl}
+                        startFrom={videoStartFrame}
+                        endAt={videoEndFrame}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          objectFit: "cover",
+                          transform: "scale(1.05)",
+                        }}
+                      />
+                    </AbsoluteFill>
+                  </VideoTransitionSeries.Sequence>
+                ];
+
+                // Add transition after each segment except the last
+                if (index < segmentFrames.length - 1) {
+                  elements.push(
+                    <VideoTransitionSeries.Transition
+                      key={`trans-${index}`}
+                      presentation={fade()}
+                      timing={linearTiming({ durationInFrames: transitionFrames })}
+                    />
+                  );
+                }
+
+                return elements;
+              })}
+            </VideoTransitionSeries>
+          ) : (
+            // Standard rendering without transitions
+            segmentFrames.map(({ segment, startFrame, durationInFrames, videoStartFrame, videoEndFrame }, index) => (
+              <Sequence
+                key={`transcript-${segment.clipId}-${index}`}
+                from={startFrame}
+                durationInFrames={durationInFrames}
+                premountFor={fps}
+              >
+                <AbsoluteFill style={{ overflow: "hidden" }}>
+                  <Video
+                    src={segment.clipUrl}
+                    startFrom={videoStartFrame}
+                    endAt={videoEndFrame}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                      transform: "scale(1.05)",
+                    }}
+                  />
+                </AbsoluteFill>
+              </Sequence>
+            ))
+          )}
         </AbsoluteFill>
       )}
 

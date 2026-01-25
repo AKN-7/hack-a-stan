@@ -1924,20 +1924,40 @@ export async function executeToolCall(
       // ========================================================================
 
       case "apply_transition": {
-        const { type, atMs, durationMs } = toolInput as {
-          type: string;
-          atMs?: number;
+        const { type, durationMs, enabled } = toolInput as {
+          type?: "fade" | "crossfade" | "slide" | "none";
           durationMs?: number;
+          enabled?: boolean;
         };
 
-        // Transitions would need to be applied at cut points
+        const effectsStore = useEffectsStore.getState();
+        const shouldEnable = enabled !== false;
+        const transitionType = type ?? "fade";
+        const duration = Math.min(333, Math.max(50, durationMs ?? 150)); // Clamp between 50-333ms
+
+        effectsStore.setTransitions({
+          enabled: shouldEnable,
+          type: transitionType,
+          durationMs: duration,
+        });
+
+        if (shouldEnable) {
+          toast.success(`Cross-dissolve transitions enabled (${duration}ms)`);
+        } else {
+          toast.success("Transitions disabled");
+        }
+
         return {
           success: true,
           result: {
-            message: `Transition "${type}" would be applied - feature requires cut point detection`,
-            type,
-            atMs,
-            durationMs: durationMs || 500,
+            message: shouldEnable
+              ? `Enabled ${transitionType} transitions between jump cuts (${duration}ms duration)`
+              : "Disabled transitions between segments",
+            settings: {
+              enabled: shouldEnable,
+              type: transitionType,
+              durationMs: duration,
+            },
           },
         };
       }
