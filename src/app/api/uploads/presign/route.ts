@@ -22,6 +22,8 @@ function getContentType(fileName: string): string {
     mkv: "video/x-matroska",
     mp3: "audio/mpeg",
     wav: "audio/wav",
+    m4a: "audio/mp4",
+    aac: "audio/aac",
     png: "image/png",
     jpg: "image/jpeg",
     jpeg: "image/jpeg",

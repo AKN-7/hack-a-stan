@@ -146,23 +146,35 @@ const useUploadStore = create<IUploadStore>()(
                 if (Array.isArray(uploadData)) {
                   // URL uploads return an array
                   setUploads((prev) => [...prev, ...uploadData]);
-                  // Auto-transcribe videos (transcript store handles video rendering)
+                  // Auto-transcribe videos and audio files
                   for (const data of uploadData) {
-                    const videoUrl = data.metadata?.uploadedUrl || data.url;
-                    if (data.contentType?.startsWith("video/") && videoUrl) {
-                      const clipId = data.filePath || upload.id;
-                      useTranscriptStore.getState().addClip(clipId, videoUrl);
+                    const mediaUrl = data.metadata?.uploadedUrl || data.url;
+                    const clipId = data.filePath || upload.id;
+
+                    if (data.contentType?.startsWith("video/") && mediaUrl) {
+                      // Video file - add as video_with_audio (will be changed to video_only if empty transcription)
+                      useTranscriptStore.getState().addClip(clipId, mediaUrl, "video_with_audio");
+                      useTranscriptStore.getState().transcribeClip(clipId);
+                    } else if (data.contentType?.startsWith("audio/") && mediaUrl) {
+                      // Audio file - add as audio_only and transcribe
+                      useTranscriptStore.getState().addClip(clipId, mediaUrl, "audio_only");
                       useTranscriptStore.getState().transcribeClip(clipId);
                     }
                   }
                 } else {
                   // File uploads return a single object
                   setUploads((prev) => [...prev, uploadData]);
-                  // Auto-transcribe video (transcript store handles video rendering)
-                  const videoUrl = uploadData.metadata?.uploadedUrl || uploadData.url;
-                  if (uploadData.contentType?.startsWith("video/") && videoUrl) {
-                    const clipId = uploadData.filePath || upload.id;
-                    useTranscriptStore.getState().addClip(clipId, videoUrl);
+                  // Auto-transcribe video and audio files
+                  const mediaUrl = uploadData.metadata?.uploadedUrl || uploadData.url;
+                  const clipId = uploadData.filePath || upload.id;
+
+                  if (uploadData.contentType?.startsWith("video/") && mediaUrl) {
+                    // Video file - add as video_with_audio (will be changed to video_only if empty transcription)
+                    useTranscriptStore.getState().addClip(clipId, mediaUrl, "video_with_audio");
+                    useTranscriptStore.getState().transcribeClip(clipId);
+                  } else if (uploadData.contentType?.startsWith("audio/") && mediaUrl) {
+                    // Audio file - add as audio_only and transcribe
+                    useTranscriptStore.getState().addClip(clipId, mediaUrl, "audio_only");
                     useTranscriptStore.getState().transcribeClip(clipId);
                   }
                 }

@@ -20,6 +20,8 @@ function getContentTypeFromUrl(url: string): string {
     webm: "video/webm",
     mp3: "audio/mpeg",
     wav: "audio/wav",
+    m4a: "audio/mp4",
+    aac: "audio/aac",
     png: "image/png",
     jpg: "image/jpeg",
     jpeg: "image/jpeg",

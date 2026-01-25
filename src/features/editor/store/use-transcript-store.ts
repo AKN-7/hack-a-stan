@@ -35,6 +35,12 @@ export interface ClipTrim {
   endMs: number;    // Trim end (Infinity = no trim from end)
 }
 
+// Clip type for distinguishing between different media types
+// - "video_with_audio": Standard video clip with speech (default, has transcript)
+// - "audio_only": Audio file (m4a, mp3, etc.) - provides audio track + transcript for captions
+// - "video_only": Video without audio/speech - used as B-roll over audio clips
+export type ClipType = "video_with_audio" | "audio_only" | "video_only";
+
 // Clip transcript status
 export interface ClipTranscript {
   clipId: string;
@@ -46,6 +52,8 @@ export interface ClipTranscript {
   trim?: ClipTrim;  // Optional trim boundaries
   isDeleted?: boolean;  // Soft delete for clips (shows as grayed out, can restore)
   deleteReason?: string;  // Why the clip was deleted (e.g., "Duplicate take - better version in Clip 3")
+  clipType?: ClipType;  // Type of clip (default: video_with_audio)
+  durationMs?: number;  // Duration of the clip in ms (needed for video_only clips without words)
 }
 
 // Segment to cut from video
@@ -67,6 +75,18 @@ export interface KeepSegment {
 // Unified segment for rendering (with accumulated offset)
 export interface RenderSegment extends KeepSegment {
   offsetMs: number; // Where this segment starts in the final timeline
+  clipType?: ClipType; // Type of the source clip
+}
+
+// B-roll assignment - maps a video_only clip to a time range in the timeline
+export interface BrollAssignment {
+  clipId: string;
+  clipUrl: string;
+  startMs: number;      // Where this B-roll starts in the ORIGINAL video
+  endMs: number;        // Where this B-roll ends in the ORIGINAL video
+  durationMs: number;   // How long this B-roll segment is
+  timelineStartMs: number;  // Where this B-roll appears in the OUTPUT timeline
+  timelineEndMs: number;    // Where this B-roll ends in the OUTPUT timeline
 }
 
 // History snapshot for undo/redo
@@ -171,8 +191,24 @@ interface ITranscriptStore {
   // Get captions mapped to output timeline for rendering
   getCaptionsForRender: () => { text: string; startMs: number; endMs: number }[];
 
+  // Get clips by type
+  getAudioOnlyClips: () => ClipTranscript[];
+  getVideoOnlyClips: () => ClipTranscript[];
+  getVideoWithAudioClips: () => ClipTranscript[];
+  hasAudioBrollScenario: () => boolean;
+  hasAudioClipsNeedingBroll: () => boolean;
+
+  // Get B-roll assignments for audio-primary mode
+  // This maps video_only clips as visuals over audio_only segments
+  getBrollAssignments: () => BrollAssignment[];
+
+  // Get audio segments for rendering (audio_only clips with transcript)
+  getAudioSegments: () => RenderSegment[];
+
   // Actions
-  addClip: (clipId: string, url: string) => void;
+  addClip: (clipId: string, url: string, clipType?: ClipType, durationMs?: number) => void;
+  setClipType: (clipId: string, clipType: ClipType) => void;
+  setClipDurationMs: (clipId: string, durationMs: number) => void;
   removeClip: (clipId: string, reason?: string) => void;  // Soft delete with optional reason
   restoreClip: (clipId: string) => void;  // Restore a soft-deleted clip
   hardRemoveClip: (clipId: string) => void;  // Permanently remove a clip
@@ -181,7 +217,7 @@ interface ITranscriptStore {
   getClipDuration: (clipId: string) => number;
 
   setClipStatus: (clipId: string, status: ClipTranscript["status"], error?: string) => void;
-  setClipTranscript: (clipId: string, words: TranscriptWord[], text: string) => void;
+  setClipTranscript: (clipId: string, words: TranscriptWord[], text: string, durationMs?: number) => void;
 
   // Word operations
   deleteWord: (wordId: string) => void;
@@ -556,14 +592,17 @@ const useTranscriptStore = create<ITranscriptStore>()(
       },
 
       getRenderSegments: () => {
+        const { clips } = get();
         const keepSegments = get().getKeepSegments();
         const renderSegments: RenderSegment[] = [];
         let offsetMs = 0;
 
         for (const segment of keepSegments) {
+          const clip = clips[segment.clipId];
           renderSegments.push({
             ...segment,
             offsetMs,
+            clipType: clip?.clipType || "video_with_audio",
           });
           offsetMs += segment.durationMs;
         }
@@ -572,13 +611,23 @@ const useTranscriptStore = create<ITranscriptStore>()(
       },
 
       getTotalDurationMs: () => {
-        const keepSegments = get().getKeepSegments();
-        return keepSegments.reduce((total, seg) => total + seg.durationMs, 0);
+        // Use audio segments when in audio+broll mode, otherwise use keep segments
+        const isAudioBrollMode = get().hasAudioBrollScenario();
+        const segments = isAudioBrollMode
+          ? get().getAudioSegments()
+          : get().getKeepSegments();
+        return segments.reduce((total, seg) => total + seg.durationMs, 0);
       },
 
       getCaptionsForRender: () => {
         const { clips } = get();
-        const renderSegments = get().getRenderSegments();
+
+        // Use audio segments when in audio+broll mode, otherwise use regular render segments
+        const isAudioBrollMode = get().hasAudioBrollScenario();
+        const renderSegments = isAudioBrollMode
+          ? get().getAudioSegments()
+          : get().getRenderSegments();
+
         const allWords: { text: string; startMs: number; endMs: number }[] = [];
 
         // Collect all words with mapped timestamps
@@ -609,7 +658,185 @@ const useTranscriptStore = create<ITranscriptStore>()(
         return allWords;
       },
 
-      addClip: (clipId: string, url: string) => {
+      // Get clips that are audio-only (m4a, mp3, etc. - have transcript but no video)
+      getAudioOnlyClips: () => {
+        const { clips, clipOrder } = get();
+        return clipOrder
+          .map(id => clips[id])
+          .filter(clip => clip && !clip.isDeleted && clip.clipType === "audio_only" && clip.status === "ready");
+      },
+
+      // Get clips that are video-only (B-roll - have video but no transcript)
+      getVideoOnlyClips: () => {
+        const { clips, clipOrder } = get();
+        return clipOrder
+          .map(id => clips[id])
+          .filter(clip => clip && !clip.isDeleted && clip.clipType === "video_only" && clip.status === "ready");
+      },
+
+      // Get clips that are regular video with audio (have both video and transcript)
+      getVideoWithAudioClips: () => {
+        const { clips, clipOrder } = get();
+        return clipOrder
+          .map(id => clips[id])
+          .filter(clip => clip && !clip.isDeleted && clip.clipType === "video_with_audio" && clip.status === "ready" && clip.words.length > 0);
+      },
+
+      // Check if we have the PURE audio + B-roll scenario
+      // True ONLY when:
+      // - At least one audio_only clip exists
+      // - At least one video_only (B-roll) clip exists
+      // - NO video_with_audio clips exist (if regular video exists, use normal rendering)
+      hasAudioBrollScenario: () => {
+        const audioClips = get().getAudioOnlyClips();
+        const videoOnlyClips = get().getVideoOnlyClips();
+        const videoWithAudioClips = get().getVideoWithAudioClips();
+
+        // Only true for PURE audio+broll mode: audio exists, B-roll exists, NO regular video
+        const isPureAudioBroll = audioClips.length > 0 && videoOnlyClips.length > 0 && videoWithAudioClips.length === 0;
+
+        if (isPureAudioBroll) {
+          console.log(`[Audio+Broll] Pure audio+broll mode: ${audioClips.length} audio clips, ${videoOnlyClips.length} B-roll clips`);
+        }
+
+        return isPureAudioBroll;
+      },
+
+      // Get audio segments for rendering (from audio_only clips)
+      getAudioSegments: () => {
+        const { clips, clipOrder, gapThresholdMs } = get();
+        const audioSegments: RenderSegment[] = [];
+        let offsetMs = 0;
+
+        for (const clipId of clipOrder) {
+          const clip = clips[clipId];
+          // Only process audio_only clips with words
+          if (!clip || clip.isDeleted || clip.status !== "ready" ||
+              clip.clipType !== "audio_only" || clip.words.length === 0) continue;
+
+          const trimStart = clip.trim?.startMs ?? 0;
+          const trimEnd = clip.trim?.endMs ?? Infinity;
+          const clipBaseTime = clip.words[0]?.startMs ?? 0;
+          const activeWords = clip.words.filter(w => !w.isDeleted);
+          if (activeWords.length === 0) continue;
+
+          // Group consecutive active words into segments (same logic as getKeepSegments)
+          let currentSegment: RenderSegment | null = null;
+
+          for (const word of activeWords) {
+            const wordRelativeStart = word.startMs - clipBaseTime;
+            const wordRelativeEnd = word.endMs - clipBaseTime;
+
+            if (wordRelativeEnd <= trimStart || wordRelativeStart >= trimEnd) continue;
+
+            const clampedStart = Math.max(word.startMs, clipBaseTime + trimStart);
+            const clampedEnd = Math.min(word.endMs, clipBaseTime + trimEnd);
+
+            if (!currentSegment) {
+              currentSegment = {
+                clipId,
+                clipUrl: clip.url,
+                startMs: clampedStart,
+                endMs: clampedEnd,
+                durationMs: clampedEnd - clampedStart,
+                offsetMs,
+                clipType: "audio_only",
+              };
+            } else {
+              const gap = clampedStart - currentSegment.endMs;
+              if (gap < gapThresholdMs) {
+                currentSegment.endMs = clampedEnd;
+                currentSegment.durationMs = currentSegment.endMs - currentSegment.startMs;
+              } else {
+                audioSegments.push(currentSegment);
+                offsetMs += currentSegment.durationMs;
+                currentSegment = {
+                  clipId,
+                  clipUrl: clip.url,
+                  startMs: clampedStart,
+                  endMs: clampedEnd,
+                  durationMs: clampedEnd - clampedStart,
+                  offsetMs,
+                  clipType: "audio_only",
+                };
+              }
+            }
+          }
+
+          if (currentSegment) {
+            audioSegments.push(currentSegment);
+            offsetMs += currentSegment.durationMs;
+          }
+        }
+
+        return audioSegments;
+      },
+
+      // Get B-roll assignments - distributes video_only clips across audio segments
+      // Logic: Split audio duration evenly among available B-roll clips, cycling if needed
+      // Works for both pure audio+broll mode AND mixed mode (where audio_only clips need B-roll)
+      getBrollAssignments: () => {
+        const brollAssignments: BrollAssignment[] = [];
+        const videoOnlyClips = get().getVideoOnlyClips();
+
+        if (videoOnlyClips.length === 0) {
+          return brollAssignments;
+        }
+
+        // Get audio segments - these need B-roll coverage
+        const audioSegments = get().getAudioSegments();
+
+        if (audioSegments.length === 0) {
+          return brollAssignments;
+        }
+
+        // Calculate total audio duration that needs B-roll
+        const totalAudioDuration = audioSegments.reduce((sum, seg) => sum + seg.durationMs, 0);
+
+        if (totalAudioDuration === 0) {
+          return brollAssignments;
+        }
+
+        // Distribute B-roll clips evenly across the audio duration
+        // B-roll will LOOP to fill the entire audio duration
+        const brollCount = videoOnlyClips.length;
+        let currentTimelineMs = 0;
+        let brollIndex = 0;
+
+        // Keep distributing B-roll until we cover the entire audio duration
+        while (currentTimelineMs < totalAudioDuration) {
+          const brollClip = videoOnlyClips[brollIndex % brollCount];
+          const brollDuration = brollClip.durationMs || 10000; // Default 10s if unknown
+
+          const remainingDuration = totalAudioDuration - currentTimelineMs;
+          const useDuration = Math.min(brollDuration, remainingDuration);
+
+          brollAssignments.push({
+            clipId: brollClip.clipId,
+            clipUrl: brollClip.url,
+            startMs: 0, // Start from beginning of B-roll clip
+            endMs: useDuration,
+            durationMs: useDuration,
+            timelineStartMs: currentTimelineMs,
+            timelineEndMs: currentTimelineMs + useDuration,
+          });
+
+          currentTimelineMs += useDuration;
+          brollIndex++;
+        }
+
+        console.log(`[B-roll] Assigned ${brollAssignments.length} B-roll segments across ${totalAudioDuration}ms of audio (looped ${Math.ceil(brollIndex / brollCount)} times)`);
+        return brollAssignments;
+      },
+
+      // Check if there are any audio_only clips that need B-roll (even in mixed mode)
+      hasAudioClipsNeedingBroll: () => {
+        const audioClips = get().getAudioOnlyClips();
+        const videoOnlyClips = get().getVideoOnlyClips();
+        return audioClips.length > 0 && videoOnlyClips.length > 0;
+      },
+
+      addClip: (clipId: string, url: string, clipType?: ClipType, durationMs?: number) => {
         set((state) => ({
           clips: {
             ...state.clips,
@@ -619,12 +846,46 @@ const useTranscriptStore = create<ITranscriptStore>()(
               status: "pending",
               words: [],
               text: "",
+              clipType: clipType || "video_with_audio",
+              durationMs: durationMs,
             },
           },
           clipOrder: state.clipOrder.includes(clipId)
             ? state.clipOrder
             : [...state.clipOrder, clipId],
         }));
+      },
+
+      setClipType: (clipId: string, clipType: ClipType) => {
+        set((state) => {
+          const clip = state.clips[clipId];
+          if (!clip) return state;
+          return {
+            clips: {
+              ...state.clips,
+              [clipId]: {
+                ...clip,
+                clipType,
+              },
+            },
+          };
+        });
+      },
+
+      setClipDurationMs: (clipId: string, durationMs: number) => {
+        set((state) => {
+          const clip = state.clips[clipId];
+          if (!clip) return state;
+          return {
+            clips: {
+              ...state.clips,
+              [clipId]: {
+                ...clip,
+                durationMs,
+              },
+            },
+          };
+        });
       },
 
       // Soft delete a clip (marks as deleted but keeps in store for restore)
@@ -762,18 +1023,36 @@ const useTranscriptStore = create<ITranscriptStore>()(
         }
       },
 
-      setClipTranscript: (clipId: string, words: TranscriptWord[], text: string) => {
-        set((state) => ({
-          clips: {
-            ...state.clips,
-            [clipId]: {
-              ...state.clips[clipId],
-              words,
-              text,
-              status: "ready",
+      setClipTranscript: (clipId: string, words: TranscriptWord[], text: string, durationMs?: number) => {
+        set((state) => {
+          const clip = state.clips[clipId];
+          if (!clip) return state;
+
+          // Determine clip type based on transcription result
+          // If video file has no words, it's B-roll (video_only)
+          // If audio file has words, keep it as audio_only
+          let clipType = clip.clipType || "video_with_audio";
+
+          if (words.length === 0 && clip.clipType === "video_with_audio") {
+            // Video with no speech = B-roll
+            clipType = "video_only";
+            console.log(`[Transcript] Clip ${clipId} marked as video_only (B-roll) - no speech detected`);
+          }
+
+          return {
+            clips: {
+              ...state.clips,
+              [clipId]: {
+                ...clip,
+                words,
+                text,
+                status: "ready",
+                clipType,
+                durationMs: durationMs || clip.durationMs,
+              },
             },
-          },
-        }));
+          };
+        });
 
         // Check if we should auto-process (waits for ALL clips to be ready)
         // This replaces the manual filler word suggestion with automatic processing
@@ -1254,7 +1533,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
             isDeleted: false,
           }));
 
-          setClipTranscript(clipId, words, data.text || "");
+          setClipTranscript(clipId, words, data.text || "", data.durationMs);
 
           // NOTE: We do NOT add video blocks to DesignCombo anymore.
           // The transcript store IS the source of truth for video clips.
@@ -1360,22 +1639,30 @@ const useTranscriptStore = create<ITranscriptStore>()(
           // - Optimal clip ordering for narrative flow
           set({ processingStatus: "AI analyzing clips...", processingStep: 2 });
           try {
-            // Build clip data for AI analysis - include ALL clips
-            const clipData = clipOrder.map((clipId, index) => {
-              const clip = clips[clipId];
-              const activeWords = clip.words.filter(w => !w.isDeleted);
-              return {
-                clipId,
-                clipIndex: index + 1,
-                text: activeWords.map(w => w.text).join(" "),
-                words: activeWords.map(w => ({
-                  id: w.id,
-                  text: w.text,
-                  startMs: w.startMs,
-                  endMs: w.endMs,
-                })),
-              };
-            });
+            // Build clip data for AI analysis - EXCLUDE video_only clips (B-roll)
+            // B-roll clips have no transcript and shouldn't be analyzed for content
+            const clipData = clipOrder
+              .filter(clipId => {
+                const clip = clips[clipId];
+                // Skip video_only clips - they're B-roll, not content to analyze
+                return clip && clip.clipType !== "video_only";
+              })
+              .map((clipId, index) => {
+                const clip = clips[clipId];
+                const activeWords = clip.words.filter(w => !w.isDeleted);
+                return {
+                  clipId,
+                  clipIndex: index + 1,
+                  clipType: clip.clipType || "video_with_audio", // Include type for context
+                  text: activeWords.map(w => w.text).join(" "),
+                  words: activeWords.map(w => ({
+                    id: w.id,
+                    text: w.text,
+                    startMs: w.startMs,
+                    endMs: w.endMs,
+                  })),
+                };
+              });
 
             // Call AI analysis API with all clips
             console.log("[Auto-Magic] Sending clips to AI for analysis:", clipData.map(c => ({
@@ -1422,7 +1709,13 @@ const useTranscriptStore = create<ITranscriptStore>()(
                     : clipToRemove.reason;
 
                   // Verify the clip exists before removing
-                  if (get().clips[clipId]) {
+                  const clipToCheck = get().clips[clipId];
+                  if (clipToCheck) {
+                    // NEVER remove video_only clips - they're B-roll, not bad takes
+                    if (clipToCheck.clipType === "video_only") {
+                      console.log(`[Auto-Magic] Preserving B-roll clip ${clipIndex} - ${clipId} (video_only)`);
+                      continue;
+                    }
                     removeClip(clipId, `Clip ${clipIndex}: ${reason}`);
                     clipsRemoved++;
                     removedClipIds.push(clipId);
@@ -1500,9 +1793,10 @@ const useTranscriptStore = create<ITranscriptStore>()(
           // Step 5: Apply AI-suggested clip order (if provided)
           if (aiSuggestedOrder && aiSuggestedOrder.length > 0) {
             set({ processingStatus: "Applying AI-optimized clip order..." });
-            // Filter to only include clips that still exist and aren't deleted
             const currentClips = get().clips;
             const currentOrder = get().clipOrder;
+
+            // Get the active (non-deleted) clips in AI's suggested order
             const validOrder = aiSuggestedOrder.filter(id =>
               currentClips[id] !== undefined && !currentClips[id].isDeleted
             );
@@ -1513,17 +1807,25 @@ const useTranscriptStore = create<ITranscriptStore>()(
               ...aiSuggestedOrder,
               ...removedClipIds, // clips AI explicitly removed
             ]);
-            const unmentionedClips = currentOrder.filter(id =>
+            const unmentionedActiveClips = currentOrder.filter(id =>
               !mentionedClipIds.has(id) &&
               currentClips[id] !== undefined &&
               !currentClips[id].isDeleted
             );
 
-            if (unmentionedClips.length > 0) {
-              console.log(`[Auto-Magic] Warning: AI didn't mention ${unmentionedClips.length} clips, preserving them:`, unmentionedClips);
+            // IMPORTANT: Keep deleted clips in the order so they remain visible (grayed out) in UI
+            // This allows users to see what was removed and restore them if needed
+            const deletedClips = currentOrder.filter(id =>
+              currentClips[id] !== undefined &&
+              currentClips[id].isDeleted
+            );
+
+            if (unmentionedActiveClips.length > 0) {
+              console.log(`[Auto-Magic] Warning: AI didn't mention ${unmentionedActiveClips.length} clips, preserving them:`, unmentionedActiveClips);
             }
 
-            const finalOrder = [...validOrder, ...unmentionedClips];
+            // Final order: active clips in AI order + unmentioned active clips + deleted clips (at end, visible but grayed out)
+            const finalOrder = [...validOrder, ...unmentionedActiveClips, ...deletedClips];
 
             // Check if order actually changes
             const hasChanges = finalOrder.some((id, i) => id !== currentOrder[i]) || finalOrder.length !== currentOrder.length;

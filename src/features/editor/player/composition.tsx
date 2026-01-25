@@ -7,7 +7,7 @@ import { TransitionSeries, Transitions } from "@designcombo/transitions";
 import { TransitionSeries as VideoTransitionSeries, linearTiming, fade } from "./transitions";
 import { calculateTextHeight } from "../utils/text";
 import { calculateSegmentFrames } from "../utils/segment-frames";
-import { AbsoluteFill, Sequence, Video, useCurrentFrame, prefetch } from "remotion";
+import { AbsoluteFill, Sequence, Video, Audio, useCurrentFrame, prefetch } from "remotion";
 import useStore from "../store/use-store";
 import useTranscriptStore from "../store/use-transcript-store";
 import useEffectsStore from "../store/use-effects-store";
@@ -37,9 +37,81 @@ const Composition = () => {
   const getEmphasisPointsForRender = useTranscriptStore((state) => state.getEmphasisPointsForRender);
   const textHook = useTranscriptStore((state) => state.textHook);
 
+  // Audio + B-roll scenario handling
+  const hasAudioBrollScenario = useTranscriptStore((state) => state.hasAudioBrollScenario);
+  const hasAudioClipsNeedingBroll = useTranscriptStore((state) => state.hasAudioClipsNeedingBroll);
+  const getBrollAssignments = useTranscriptStore((state) => state.getBrollAssignments);
+  const getAudioSegments = useTranscriptStore((state) => state.getAudioSegments);
+  const getVideoOnlyClips = useTranscriptStore((state) => state.getVideoOnlyClips);
+
   // Get transcript-based render segments (now reactive to clips changes)
   const renderSegments = useMemo(() => getRenderSegments(), [clips, clipOrder, getRenderSegments]);
   const hasTranscriptData = renderSegments.length > 0;
+
+  // Check for audio + B-roll scenario (m4a with video_only clips)
+  const isAudioBrollMode = useMemo(() => hasAudioBrollScenario(), [clips, clipOrder, hasAudioBrollScenario]);
+  const audioSegments = useMemo(() => isAudioBrollMode ? getAudioSegments() : [], [isAudioBrollMode, clips, clipOrder, getAudioSegments]);
+  const brollAssignments = useMemo(() => isAudioBrollMode ? getBrollAssignments() : [], [isAudioBrollMode, clips, clipOrder, getBrollAssignments]);
+
+  // Mixed mode: audio_only clips interleaved with video_with_audio - still need B-roll over audio segments
+  const needsMixedModeBroll = useMemo(() => {
+    return !isAudioBrollMode && hasAudioClipsNeedingBroll();
+  }, [isAudioBrollMode, clips, clipOrder, hasAudioClipsNeedingBroll]);
+
+  // Calculate B-roll assignments for mixed mode (based on audio_only segments in renderSegments)
+  const mixedModeBrollAssignments = useMemo(() => {
+    if (!needsMixedModeBroll) return [];
+
+    const videoOnlyClips = getVideoOnlyClips();
+    if (videoOnlyClips.length === 0) return [];
+
+    // Find audio_only segments from renderSegments
+    const audioOnlySegments = renderSegments.filter(seg => seg.clipType === "audio_only");
+    if (audioOnlySegments.length === 0) return [];
+
+    const assignments: Array<{
+      clipId: string;
+      clipUrl: string;
+      startMs: number;
+      endMs: number;
+      durationMs: number;
+      timelineStartMs: number;
+      timelineEndMs: number;
+    }> = [];
+
+    let brollIndex = 0;
+    const brollCount = videoOnlyClips.length;
+
+    // For each audio_only segment, assign B-roll (looping if needed)
+    for (const audioSeg of audioOnlySegments) {
+      let coveredDuration = 0;
+      const segmentDuration = audioSeg.durationMs;
+
+      // Fill this audio segment with B-roll (may need multiple B-roll clips)
+      while (coveredDuration < segmentDuration) {
+        const brollClip = videoOnlyClips[brollIndex % brollCount];
+        const brollDuration = brollClip.durationMs || 10000;
+        const remainingDuration = segmentDuration - coveredDuration;
+        const useDuration = Math.min(brollDuration, remainingDuration);
+
+        assignments.push({
+          clipId: brollClip.clipId,
+          clipUrl: brollClip.url,
+          startMs: 0,
+          endMs: useDuration,
+          durationMs: useDuration,
+          timelineStartMs: audioSeg.offsetMs + coveredDuration,
+          timelineEndMs: audioSeg.offsetMs + coveredDuration + useDuration,
+        });
+
+        coveredDuration += useDuration;
+        brollIndex++;
+      }
+    }
+
+    console.log(`[Mixed B-roll] Assigned ${assignments.length} B-roll segments over ${audioOnlySegments.length} audio segments`);
+    return assignments;
+  }, [needsMixedModeBroll, renderSegments, clips, clipOrder, getVideoOnlyClips]);
 
   // Get transition settings for cross-dissolve smoothing
   const transitions = useEffectsStore((state) => state.transitions);
@@ -242,11 +314,33 @@ const Composition = () => {
     return filtered;
   }, [groupedItems, hasTranscriptData, trackItemsMap]);
 
-  // Prefetch all video sources for smooth playback
+  // Prefetch all video/audio sources for smooth playback
   useEffect(() => {
-    if (renderSegments.length === 0) return;
+    const urlsToFetch: string[] = [];
 
-    const uniqueUrls = [...new Set(renderSegments.map(s => s.clipUrl))];
+    // Add regular render segment URLs
+    if (renderSegments.length > 0) {
+      urlsToFetch.push(...renderSegments.map(s => s.clipUrl));
+    }
+
+    // Add B-roll URLs if in audio+broll mode
+    if (isAudioBrollMode && brollAssignments.length > 0) {
+      urlsToFetch.push(...brollAssignments.map(a => a.clipUrl));
+    }
+
+    // Add audio segment URLs if in audio+broll mode
+    if (isAudioBrollMode && audioSegments.length > 0) {
+      urlsToFetch.push(...audioSegments.map(s => s.clipUrl));
+    }
+
+    // Add mixed mode B-roll URLs
+    if (mixedModeBrollAssignments.length > 0) {
+      urlsToFetch.push(...mixedModeBrollAssignments.map(a => a.clipUrl));
+    }
+
+    if (urlsToFetch.length === 0) return;
+
+    const uniqueUrls = [...new Set(urlsToFetch)];
     const prefetchers = uniqueUrls.map(url => {
       try {
         return prefetch(url, { method: 'blob-url' });
@@ -264,7 +358,7 @@ const Composition = () => {
         }
       });
     };
-  }, [renderSegments]);
+  }, [renderSegments, isAudioBrollMode, brollAssignments, audioSegments, mixedModeBrollAssignments]);
 
   // Pre-calculate frame positions using cumulative approach to avoid rounding drift
   const segmentFrames = useMemo(
@@ -272,31 +366,132 @@ const Composition = () => {
     [renderSegments, fps]
   );
 
-  // Video content that may be wrapped with EmphasisZoom
-  const videoContent = hasTranscriptData ? (
+  // Calculate B-roll frame positions for audio+broll mode
+  const brollFrames = useMemo(() => {
+    if (!isAudioBrollMode || brollAssignments.length === 0) return [];
+
+    return brollAssignments.map(assignment => ({
+      assignment,
+      startFrame: Math.floor((assignment.timelineStartMs / 1000) * fps),
+      durationInFrames: Math.ceil((assignment.durationMs / 1000) * fps),
+      videoStartFrame: Math.floor((assignment.startMs / 1000) * fps),
+      videoEndFrame: Math.floor((assignment.endMs / 1000) * fps),
+    }));
+  }, [isAudioBrollMode, brollAssignments, fps]);
+
+  // Calculate audio segment frame positions
+  const audioFrames = useMemo(() => {
+    if (!isAudioBrollMode || audioSegments.length === 0) return [];
+
+    return audioSegments.map(segment => ({
+      segment,
+      startFrame: Math.floor((segment.offsetMs / 1000) * fps),
+      durationInFrames: Math.ceil((segment.durationMs / 1000) * fps),
+      audioStartFrame: Math.floor((segment.startMs / 1000) * fps),
+      audioEndFrame: Math.floor((segment.endMs / 1000) * fps),
+    }));
+  }, [isAudioBrollMode, audioSegments, fps]);
+
+  // Calculate mixed mode B-roll frame positions
+  const mixedBrollFrames = useMemo(() => {
+    if (!needsMixedModeBroll || mixedModeBrollAssignments.length === 0) return [];
+
+    return mixedModeBrollAssignments.map(assignment => ({
+      assignment,
+      startFrame: Math.floor((assignment.timelineStartMs / 1000) * fps),
+      durationInFrames: Math.ceil((assignment.durationMs / 1000) * fps),
+      videoStartFrame: Math.floor((assignment.startMs / 1000) * fps),
+      videoEndFrame: Math.floor((assignment.endMs / 1000) * fps),
+    }));
+  }, [needsMixedModeBroll, mixedModeBrollAssignments, fps]);
+
+  // Audio + B-roll content: renders audio clips with B-roll video overlaid
+  const audioBrollContent = isAudioBrollMode ? (
+    <AbsoluteFill style={{ backgroundColor: "#000" }}>
+      {/* Render B-roll video clips as visual track */}
+      {brollFrames.map(({ assignment, startFrame, durationInFrames, videoStartFrame, videoEndFrame }, index) => (
+        <Sequence
+          key={`broll-${assignment.clipId}-${index}`}
+          from={startFrame}
+          durationInFrames={durationInFrames}
+          premountFor={fps}
+        >
+          <AbsoluteFill style={{ overflow: "hidden" }}>
+            <Video
+              src={assignment.clipUrl}
+              startFrom={videoStartFrame}
+              endAt={videoEndFrame}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                transform: "scale(1.05)",
+              }}
+              // Mute the B-roll video since audio comes from audio_only clip
+              muted
+            />
+          </AbsoluteFill>
+        </Sequence>
+      ))}
+
+      {/* Render audio from audio_only clips */}
+      {audioFrames.map(({ segment, startFrame, durationInFrames, audioStartFrame, audioEndFrame }, index) => (
+        <Sequence
+          key={`audio-${segment.clipId}-${index}`}
+          from={startFrame}
+          durationInFrames={durationInFrames}
+        >
+          <Audio
+            src={segment.clipUrl}
+            startFrom={audioStartFrame}
+            endAt={audioEndFrame}
+          />
+        </Sequence>
+      ))}
+    </AbsoluteFill>
+  ) : null;
+
+  // Video content that may be wrapped with EmphasisZoom (for non-audioBroll mode)
+  // Handles both video_with_audio clips (render as Video) and audio_only clips (render as Audio)
+  const videoContent = hasTranscriptData && !isAudioBrollMode ? (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
       {transitionFrames > 0 && segmentFrames.length > 1 ? (
         // Use TransitionSeries for smooth cross-dissolve between segments
         <VideoTransitionSeries>
           {segmentFrames.flatMap(({ segment, durationInFrames, videoStartFrame, videoEndFrame }, index) => {
+            // Check if this is an audio_only segment - render as Audio, not Video
+            const isAudioOnly = segment.clipType === "audio_only";
+
             const elements: React.ReactNode[] = [
               <VideoTransitionSeries.Sequence
                 key={`seq-${segment.clipId}-${index}`}
                 durationInFrames={durationInFrames}
               >
-                <AbsoluteFill style={{ overflow: "hidden" }}>
-                  <Video
-                    src={segment.clipUrl}
-                    startFrom={videoStartFrame}
-                    endAt={videoEndFrame}
-                    style={{
-                      width: "100%",
-                      height: "100%",
-                      objectFit: "cover",
-                      transform: "scale(1.05)",
-                    }}
-                  />
-                </AbsoluteFill>
+                {isAudioOnly ? (
+                  // Audio-only clip: render just the audio (black screen with captions)
+                  <AbsoluteFill style={{ backgroundColor: "#000" }}>
+                    <Audio
+                      src={segment.clipUrl}
+                      startFrom={videoStartFrame}
+                      endAt={videoEndFrame}
+                    />
+                  </AbsoluteFill>
+                ) : (
+                  // Video with audio: render as normal video
+                  <AbsoluteFill style={{ overflow: "hidden" }}>
+                    <Video
+                      src={segment.clipUrl}
+                      startFrom={videoStartFrame}
+                      endAt={videoEndFrame}
+                      style={{
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "cover",
+                        transform: "scale(1.05)",
+                      }}
+                    />
+                  </AbsoluteFill>
+                )}
               </VideoTransitionSeries.Sequence>
             ];
 
@@ -316,36 +511,56 @@ const Composition = () => {
         </VideoTransitionSeries>
       ) : (
         // Standard rendering without transitions
-        segmentFrames.map(({ segment, startFrame, durationInFrames, videoStartFrame, videoEndFrame }, index) => (
-          <Sequence
-            key={`transcript-${segment.clipId}-${index}`}
-            from={startFrame}
-            durationInFrames={durationInFrames}
-            premountFor={fps}
-          >
-            <AbsoluteFill style={{ overflow: "hidden" }}>
-              <Video
-                src={segment.clipUrl}
-                startFrom={videoStartFrame}
-                endAt={videoEndFrame}
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
-                  transform: "scale(1.05)",
-                }}
-              />
-            </AbsoluteFill>
-          </Sequence>
-        ))
+        segmentFrames.map(({ segment, startFrame, durationInFrames, videoStartFrame, videoEndFrame }, index) => {
+          // Check if this is an audio_only segment
+          const isAudioOnly = segment.clipType === "audio_only";
+
+          return (
+            <Sequence
+              key={`transcript-${segment.clipId}-${index}`}
+              from={startFrame}
+              durationInFrames={durationInFrames}
+              premountFor={fps}
+            >
+              {isAudioOnly ? (
+                // Audio-only clip: render just the audio (black screen with captions)
+                <AbsoluteFill style={{ backgroundColor: "#000" }}>
+                  <Audio
+                    src={segment.clipUrl}
+                    startFrom={videoStartFrame}
+                    endAt={videoEndFrame}
+                  />
+                </AbsoluteFill>
+              ) : (
+                // Video with audio: render as normal video
+                <AbsoluteFill style={{ overflow: "hidden" }}>
+                  <Video
+                    src={segment.clipUrl}
+                    startFrom={videoStartFrame}
+                    endAt={videoEndFrame}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                      transform: "scale(1.05)",
+                    }}
+                  />
+                </AbsoluteFill>
+              )}
+            </Sequence>
+          );
+        })
       )}
     </AbsoluteFill>
   ) : null;
 
   return (
     <>
-      {/* Transcript-driven video rendering with optional emphasis zoom */}
-      {hasTranscriptData && (
+      {/* Audio + B-roll mode: audio clips with B-roll video overlaid */}
+      {isAudioBrollMode && audioBrollContent}
+
+      {/* Transcript-driven video rendering with optional emphasis zoom (non-audioBroll mode) */}
+      {hasTranscriptData && !isAudioBrollMode && (
         hasEmphasisPoints ? (
           <EmphasisZoom emphasisPoints={emphasisPoints}>
             {videoContent}
@@ -353,6 +568,35 @@ const Composition = () => {
         ) : (
           videoContent
         )
+      )}
+
+      {/* Mixed mode B-roll: renders B-roll video over audio_only segments in mixed timeline */}
+      {needsMixedModeBroll && mixedBrollFrames.length > 0 && (
+        <AbsoluteFill>
+          {mixedBrollFrames.map(({ assignment, startFrame, durationInFrames, videoStartFrame, videoEndFrame }, index) => (
+            <Sequence
+              key={`mixed-broll-${assignment.clipId}-${index}`}
+              from={startFrame}
+              durationInFrames={durationInFrames}
+              premountFor={fps}
+            >
+              <AbsoluteFill style={{ overflow: "hidden" }}>
+                <Video
+                  src={assignment.clipUrl}
+                  startFrom={videoStartFrame}
+                  endAt={videoEndFrame}
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                    transform: "scale(1.05)",
+                  }}
+                  muted
+                />
+              </AbsoluteFill>
+            </Sequence>
+          ))}
+        </AbsoluteFill>
       )}
 
       {/* Non-video timeline items (text, captions, audio, images/B-roll, etc.) */}

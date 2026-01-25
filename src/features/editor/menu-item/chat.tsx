@@ -34,10 +34,6 @@ import { ShimmeringText } from "@/components/ui/shimmering-text";
 import useChatStore, { ChatMessage, ToolCall } from "@/features/chat/use-chat-store";
 import useTranscriptStore, { MagicProcessingResult } from "@/features/editor/store/use-transcript-store";
 import useStore from "@/features/editor/store/use-store";
-import { useDownloadState } from "@/features/editor/store/use-download-state";
-import StateManager from "@designcombo/state";
-import { generateId } from "@designcombo/timeline";
-import type { IDesign } from "@designcombo/types";
 import { executeToolCall } from "@/features/chat/tool-executor";
 import type Anthropic from "@anthropic-ai/sdk";
 import { ChevronDown, ChevronUp, Check, Undo2, Film, Type as TypeIcon } from "lucide-react";
@@ -906,9 +902,7 @@ function useCountUp(end: number, duration: number = 1000) {
 // Magic Processing Summary - shows results of auto-magic processing
 function MagicProcessingSummary({ result, onDismiss }: { result: MagicProcessingResult; onDismiss?: () => void }) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const { restoreClip, restoreAllWords, clips, resetMagicProcessing, clearMagicProcessingResult } = useTranscriptStore();
-  const { actions } = useDownloadState();
-  const editorStore = useStore();
+  const { restoreClip, clips } = useTranscriptStore();
 
   const hasChanges = result.fillerCount > 0 || result.aiCutsCount > 0 || result.clipsRemoved > 0 || result.textHook;
 
@@ -917,33 +911,6 @@ function MagicProcessingSummary({ result, onDismiss }: { result: MagicProcessing
   const timeSavedSec = result.timeSavedMs / 1000;
   const animatedTime = useCountUp(timeSavedSec, 1200);
   const totalCuts = result.fillerCount + result.aiCutsCount;
-
-  // Handle export button click
-  const handleExport = () => {
-    const stateManager = (window as any).__stateManager;
-    if (stateManager) {
-      const data: IDesign = {
-        id: generateId(),
-        ...stateManager.toJSON()
-      };
-      actions.setState({ payload: data });
-      actions.startExport();
-    }
-  };
-
-  // Handle undo all - reverses everything magic did
-  const handleUndoAll = () => {
-    // Restore all deleted words
-    restoreAllWords();
-    // Restore all removed clips
-    if (result.removedClipIds) {
-      result.removedClipIds.forEach(clipId => restoreClip(clipId));
-    }
-    // Clear the text hook and emphasis points
-    resetMagicProcessing();
-    // Clear the result card
-    clearMagicProcessingResult();
-  };
 
   return (
     <div className="w-full rounded-2xl border-2 border-green-200 bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 overflow-hidden shadow-lg shadow-green-100/50">
@@ -965,7 +932,7 @@ function MagicProcessingSummary({ result, onDismiss }: { result: MagicProcessing
         </div>
 
         {/* Stats Row */}
-        <div className="flex justify-center gap-4 mb-4">
+        <div className="flex justify-center gap-4">
           {totalCuts > 0 && (
             <div className="text-center">
               <div className="text-lg font-bold text-foreground">{totalCuts}</div>
@@ -984,25 +951,6 @@ function MagicProcessingSummary({ result, onDismiss }: { result: MagicProcessing
               <div className="text-xs text-muted-foreground">hook added</div>
             </div>
           )}
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex gap-2 justify-center">
-          <Button
-            onClick={handleExport}
-            className="bg-green-600 hover:bg-green-700 text-white shadow-md shadow-green-200"
-          >
-            <Play className="h-4 w-4 mr-1.5 fill-current" />
-            Export Video
-          </Button>
-          <Button
-            variant="outline"
-            onClick={handleUndoAll}
-            className="border-green-200 text-green-700 hover:bg-green-50"
-          >
-            <RotateCcw className="h-4 w-4 mr-1.5" />
-            Undo All
-          </Button>
         </div>
       </div>
 

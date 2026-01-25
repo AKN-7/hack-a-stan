@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
-import { Upload, Sparkles, Video, Check } from "lucide-react";
+import { Upload, Sparkles, Video, Music, Check } from "lucide-react";
 import useUploadStore from "./store/use-upload-store";
 
 interface UploadWithThumbnail {
@@ -97,15 +97,17 @@ const UploadLanding = () => {
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     if (acceptedFiles.length === 0) return;
 
-    // Filter for video files
-    const videoFiles = acceptedFiles.filter(f => f.type.startsWith("video/"));
+    // Filter for video and audio files
+    const mediaFiles = acceptedFiles.filter(f =>
+      f.type.startsWith("video/") || f.type.startsWith("audio/")
+    );
 
-    if (videoFiles.length === 0) {
+    if (mediaFiles.length === 0) {
       return;
     }
 
     // Create upload entries with IDs
-    const uploadEntries: UploadWithThumbnail[] = videoFiles.map(file => ({
+    const uploadEntries: UploadWithThumbnail[] = mediaFiles.map(file => ({
       id: crypto.randomUUID(),
       file,
       thumbnail: null,
@@ -116,10 +118,15 @@ const UploadLanding = () => {
     // Set initial state immediately
     setUploadsWithThumbnails(uploadEntries);
 
-    // Generate thumbnails in parallel
+    // Generate thumbnails in parallel (only for video files)
     const thumbnailPromises = uploadEntries.map(async (entry) => {
-      const thumbnail = await generateThumbnail(entry.file);
-      return { id: entry.id, thumbnail };
+      // Only generate thumbnails for video files
+      if (entry.file.type.startsWith("video/")) {
+        const thumbnail = await generateThumbnail(entry.file);
+        return { id: entry.id, thumbnail };
+      }
+      // Audio files get no thumbnail (will show music icon)
+      return { id: entry.id, thumbnail: null };
     });
 
     // Update thumbnails as they complete
@@ -146,6 +153,7 @@ const UploadLanding = () => {
     onDrop,
     accept: {
       "video/*": [".mp4", ".mov", ".webm", ".mkv", ".avi"],
+      "audio/*": [".mp3", ".m4a", ".wav", ".aac"],
     },
     noClick: true,
     onDragEnter: () => setIsDragging(true),
@@ -177,10 +185,10 @@ const UploadLanding = () => {
           <div className="flex flex-col items-center gap-6 w-full">
             <div className="space-y-2">
               <h1 className="text-2xl font-semibold text-white">
-                Uploading {uploadsWithThumbnails.length} video{uploadsWithThumbnails.length > 1 ? "s" : ""}
+                Uploading {uploadsWithThumbnails.length} file{uploadsWithThumbnails.length > 1 ? "s" : ""}
               </h1>
               <p className="text-zinc-400">
-                Your videos will be transcribed automatically
+                Your media will be transcribed automatically
               </p>
             </div>
 
@@ -200,8 +208,12 @@ const UploadLanding = () => {
                       className="w-full h-full object-cover"
                     />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <Video className="w-6 h-6 text-zinc-600" />
+                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-zinc-800 to-zinc-900">
+                      {upload.file.type.startsWith("audio/") ? (
+                        <Music className="w-6 h-6 text-zinc-500" />
+                      ) : (
+                        <Video className="w-6 h-6 text-zinc-600" />
+                      )}
                     </div>
                   )}
 
@@ -280,7 +292,7 @@ const UploadLanding = () => {
               {/* Text */}
               <div className="space-y-1 md:space-y-2">
                 <h1 className="text-lg md:text-xl font-semibold text-white">
-                  {isDragging ? "Drop your videos" : "Tap to upload videos"}
+                  {isDragging ? "Drop your files" : "Tap to upload media"}
                 </h1>
                 <p className="text-sm text-zinc-500">
                   or drag and drop
@@ -307,7 +319,7 @@ const UploadLanding = () => {
 
             {/* Hint */}
             <p className="text-xs text-zinc-600">
-              MP4, MOV, WebM supported
+              MP4, MOV, WebM, M4A, MP3 supported
             </p>
           </>
         )}

@@ -92,6 +92,10 @@ export async function POST(request: Request) {
     const words = result.results?.channels?.[0]?.alternatives?.[0]?.words || [];
     const transcript = result.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
 
+    // Get duration from Deepgram metadata (in seconds)
+    const durationSeconds = result.metadata?.duration || 0;
+    const durationMs = Math.round(durationSeconds * 1000);
+
     // Transform to the format expected by the timeline
     const captions = words.map((word: any) => ({
       text: word.punctuated_word || word.word,
@@ -106,6 +110,7 @@ export async function POST(request: Request) {
       text: transcript,
       captions,
       clipId,
+      durationMs, // Duration of the media file
     }, { status: 200 });
 
   } catch (error: any) {
