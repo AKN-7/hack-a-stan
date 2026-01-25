@@ -141,14 +141,14 @@ const UploadLanding = () => {
       className={`
         fixed inset-0 z-50 flex items-center justify-center
         bg-gradient-to-br from-zinc-950 via-zinc-900 to-black
-        transition-all duration-300
+        transition-all duration-300 safe-area-inset
         ${isDragging ? "bg-primary/5" : ""}
       `}
     >
       <input {...getInputProps()} />
 
       {/* Main content */}
-      <div className="flex flex-col items-center justify-center gap-8 p-8 max-w-2xl text-center">
+      <div className="flex flex-col items-center justify-center gap-6 md:gap-8 p-4 md:p-8 max-w-2xl text-center w-full">
         {/* Logo/Brand area */}
         <div className="flex items-center gap-2 text-white/80">
           <Sparkles className="w-5 h-5" />
@@ -234,43 +234,43 @@ const UploadLanding = () => {
             <div
               onClick={open}
               className={`
-                relative w-full aspect-[4/3] max-w-md rounded-3xl cursor-pointer
+                relative w-full aspect-[4/3] md:aspect-[4/3] max-w-sm md:max-w-md rounded-2xl md:rounded-3xl cursor-pointer
                 border-2 border-dashed transition-all duration-300
-                flex flex-col items-center justify-center gap-6 p-8
+                flex flex-col items-center justify-center gap-4 md:gap-6 p-6 md:p-8
                 ${isDragging
                   ? "border-primary bg-primary/10 scale-105"
-                  : "border-zinc-700 hover:border-zinc-500 hover:bg-zinc-900/50"
+                  : "border-zinc-700 hover:border-zinc-500 hover:bg-zinc-900/50 active:bg-zinc-900/70"
                 }
               `}
             >
               {/* Icon */}
               <div className={`
-                w-20 h-20 rounded-2xl flex items-center justify-center transition-all duration-300
+                w-16 h-16 md:w-20 md:h-20 rounded-xl md:rounded-2xl flex items-center justify-center transition-all duration-300
                 ${isDragging
                   ? "bg-primary scale-110"
                   : "bg-gradient-to-br from-zinc-800 to-zinc-900"
                 }
               `}>
                 {isDragging ? (
-                  <Video className="w-10 h-10 text-white" />
+                  <Video className="w-8 h-8 md:w-10 md:h-10 text-white" />
                 ) : (
-                  <Upload className="w-10 h-10 text-zinc-400" />
+                  <Upload className="w-8 h-8 md:w-10 md:h-10 text-zinc-400" />
                 )}
               </div>
 
               {/* Text */}
-              <div className="space-y-2">
-                <h1 className="text-xl font-semibold text-white">
-                  {isDragging ? "Drop your videos" : "Drop videos here"}
+              <div className="space-y-1 md:space-y-2">
+                <h1 className="text-lg md:text-xl font-semibold text-white">
+                  {isDragging ? "Drop your videos" : "Tap to upload videos"}
                 </h1>
                 <p className="text-sm text-zinc-500">
-                  or click to browse
+                  or drag and drop
                 </p>
               </div>
             </div>
 
             {/* Feature pills */}
-            <div className="flex flex-wrap items-center justify-center gap-2">
+            <div className="flex flex-wrap items-center justify-center gap-1.5 md:gap-2 px-2">
               {[
                 "Auto-removes filler words",
                 "Removes stammering",
@@ -279,7 +279,7 @@ const UploadLanding = () => {
               ].map((feature) => (
                 <span
                   key={feature}
-                  className="px-3 py-1.5 rounded-full text-xs font-medium bg-zinc-800/50 text-zinc-400 border border-zinc-700/50"
+                  className="px-2.5 md:px-3 py-1 md:py-1.5 rounded-full text-[11px] md:text-xs font-medium bg-zinc-800/50 text-zinc-400 border border-zinc-700/50"
                 >
                   {feature}
                 </span>

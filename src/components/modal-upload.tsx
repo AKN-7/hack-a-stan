@@ -215,11 +215,11 @@ const ModalUpload: React.FC<ModalUploadProps> = ({ type = "all" }) => {
   return (
     <div>
       <Dialog open={showUploadModal} onOpenChange={setShowUploadModal}>
-        <DialogContent className="sm:max-w-md bg-white border border-border shadow-2xl rounded-2xl">
+        <DialogContent className="w-[calc(100%-2rem)] sm:max-w-md bg-white border border-border shadow-2xl rounded-2xl mx-auto">
           <DialogHeader>
-            <DialogTitle className="text-lg font-semibold">Upload media</DialogTitle>
+            <DialogTitle className="text-base md:text-lg font-semibold">Upload media</DialogTitle>
           </DialogHeader>
-          <div className="space-y-5">
+          <div className="space-y-4 md:space-y-5">
             <label className="flex flex-col gap-2">
               <input
                 type="file"
@@ -231,22 +231,23 @@ const ModalUpload: React.FC<ModalUploadProps> = ({ type = "all" }) => {
               />
 
               <div
-                className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors duration-150 ${
+                className={`border-2 border-dashed rounded-xl p-6 md:p-8 text-center transition-colors duration-150 active:bg-muted/70 ${
                   isDragOver
                     ? "border-primary bg-primary/5"
                     : "border-border hover:border-primary/50 hover:bg-muted/50"
                 }`}
+                onClick={triggerFileInput}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
               >
-                <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-muted flex items-center justify-center">
-                  <UploadIcon className="h-7 w-7 text-muted-foreground" />
+                <div className="w-12 h-12 md:w-14 md:h-14 mx-auto mb-3 md:mb-4 rounded-xl md:rounded-2xl bg-muted flex items-center justify-center">
+                  <UploadIcon className="h-6 w-6 md:h-7 md:w-7 text-muted-foreground" />
                 </div>
-                <p className="text-sm text-muted-foreground mb-3">
-                  Drag and drop files here, or
+                <p className="text-sm text-muted-foreground mb-2 md:mb-3">
+                  Tap to upload or drag files here
                 </p>
-                <Button onClick={triggerFileInput} variant="outline" size="sm" className="rounded-lg font-medium">
+                <Button onClick={(e) => { e.stopPropagation(); triggerFileInput(); }} variant="outline" size="sm" className="rounded-lg font-medium h-9 md:h-8">
                   Browse files
                 </Button>
               </div>
@@ -334,7 +335,7 @@ const ModalUpload: React.FC<ModalUploadProps> = ({ type = "all" }) => {
                                 file.file && handleRemoveFile(file.id, file.file);
                               }}
                               size="icon"
-                              className="h-8 w-8 rounded-lg text-muted-foreground hover:text-red-500 hover:bg-red-50"
+                              className="h-9 w-9 md:h-8 md:w-8 rounded-lg text-muted-foreground hover:text-red-500 hover:bg-red-50"
                             >
                               <X className="h-4 w-4" />
                             </Button>
@@ -352,17 +353,18 @@ const ModalUpload: React.FC<ModalUploadProps> = ({ type = "all" }) => {
               placeholder="Or paste a video URL..."
               value={videoUrl}
               onChange={(e) => setVideoUrl(e.target.value)}
-              className="h-11 rounded-xl border-border bg-muted/50 focus:bg-white"
+              className="h-11 rounded-xl border-border bg-muted/50 focus:bg-white text-base"
+              style={{ fontSize: '16px' }}
             />
           </div>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setShowUploadModal(false)} className="rounded-lg">
+          <DialogFooter className="gap-2 flex-col sm:flex-row">
+            <Button variant="outline" onClick={() => setShowUploadModal(false)} className="rounded-lg h-11 md:h-10 w-full sm:w-auto">
               Cancel
             </Button>
             <Button
               onClick={handleUpload}
               disabled={(files.length === 0 && !videoUrl) || isUploading}
-              className="rounded-lg bg-primary hover:bg-primary/90 font-semibold shadow-md shadow-primary/25"
+              className="rounded-lg bg-primary hover:bg-primary/90 font-semibold shadow-md shadow-primary/25 h-11 md:h-10 w-full sm:w-auto"
             >
               Upload
             </Button>

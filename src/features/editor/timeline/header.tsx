@@ -6,6 +6,7 @@ import useStore from "../store/use-store";
 import useTranscriptStore from "../store/use-transcript-store";
 import { useCurrentPlayerFrame } from "../hooks/use-current-frame";
 import { useEffect, useState, useMemo } from "react";
+import { useIsMobile } from "@/hooks/use-media-query";
 
 const IconPlayerPlayFilled = ({ size }: { size: number }) => (
   <svg
@@ -68,6 +69,7 @@ const IconPlayerSkipForward = ({ size }: { size: number }) => (
 
 const Header = () => {
   const [playing, setPlaying] = useState(false);
+  const isMobile = useIsMobile();
   const { fps, playerRef, duration: storeDurationMs } = useStore();
 
   // Subscribe to clips and clipOrder to trigger re-renders when they change
@@ -126,27 +128,46 @@ const Header = () => {
   }, [playerRef]);
 
   return (
-    <div className="h-14 flex items-center justify-center gap-3 bg-white border-b border-border">
+    <div className={`h-12 md:h-14 flex items-center bg-white border-b border-border px-3 md:px-4 ${
+      isMobile ? 'justify-between' : 'justify-center gap-3'
+    }`}>
+      {/* Time display - left on mobile, after controls on desktop */}
+      {isMobile && (
+        <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-muted font-mono">
+          <span className="text-sm text-foreground font-semibold tabular-nums">
+            {frameToTimeString({ frame: currentFrame }, { fps })}
+          </span>
+          <span className="text-sm text-muted-foreground">/</span>
+          <span className="text-sm text-muted-foreground tabular-nums">
+            {timeToString({ time: durationMs })}
+          </span>
+        </div>
+      )}
+
       {/* Play controls */}
-      <div className="flex items-center gap-1 p-1 rounded-xl bg-muted">
+      <div className={`flex items-center ${isMobile ? 'gap-1' : 'gap-1 p-1 rounded-xl bg-muted'}`}>
         <Button
           onClick={handleSkipBack}
           variant="ghost"
           size="icon"
-          className="h-8 w-8 rounded-lg hover:bg-white text-muted-foreground hover:text-foreground"
+          className={`rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground ${
+            isMobile ? 'h-10 w-10' : 'h-8 w-8 hover:bg-white'
+          }`}
         >
-          <IconPlayerSkipBack size={16} />
+          <IconPlayerSkipBack size={isMobile ? 18 : 16} />
         </Button>
 
         <Button
           onClick={() => (playing ? handlePause() : handlePlay())}
           size="icon"
-          className="h-10 w-10 rounded-xl bg-primary hover:bg-primary/90 text-white shadow-md shadow-primary/25"
+          className={`bg-primary hover:bg-primary/90 text-white shadow-md shadow-primary/25 ${
+            isMobile ? 'h-11 w-11 rounded-xl' : 'h-10 w-10 rounded-xl'
+          }`}
         >
           {playing ? (
-            <IconPlayerPauseFilled size={18} />
+            <IconPlayerPauseFilled size={isMobile ? 20 : 18} />
           ) : (
-            <IconPlayerPlayFilled size={18} />
+            <IconPlayerPlayFilled size={isMobile ? 20 : 18} />
           )}
         </Button>
 
@@ -154,22 +175,26 @@ const Header = () => {
           onClick={handleSkipForward}
           variant="ghost"
           size="icon"
-          className="h-8 w-8 rounded-lg hover:bg-white text-muted-foreground hover:text-foreground"
+          className={`rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground ${
+            isMobile ? 'h-10 w-10' : 'h-8 w-8 hover:bg-white'
+          }`}
         >
-          <IconPlayerSkipForward size={16} />
+          <IconPlayerSkipForward size={isMobile ? 18 : 16} />
         </Button>
       </div>
 
-      {/* Time display */}
-      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-muted text-sm font-mono">
-        <span className="text-foreground font-semibold">
-          {frameToTimeString({ frame: currentFrame }, { fps })}
-        </span>
-        <span className="text-muted-foreground">/</span>
-        <span className="text-muted-foreground">
-          {timeToString({ time: durationMs })}
-        </span>
-      </div>
+      {/* Time display - desktop only (after controls) */}
+      {!isMobile && (
+        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-muted text-sm font-mono">
+          <span className="text-foreground font-semibold">
+            {frameToTimeString({ frame: currentFrame }, { fps })}
+          </span>
+          <span className="text-muted-foreground">/</span>
+          <span className="text-muted-foreground">
+            {timeToString({ time: durationMs })}
+          </span>
+        </div>
+      )}
     </div>
   );
 };

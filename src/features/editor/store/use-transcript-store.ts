@@ -201,7 +201,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
     (set, get) => ({
       clips: {},
       clipOrder: [],
-      gapThresholdMs: 300,
+      gapThresholdMs: 200, // Balanced - cuts gaps >200ms without being too aggressive
 
       // Auto-magic processing state
       autoProcessEnabled: true, // Enabled by default!
@@ -1321,16 +1321,22 @@ const useTranscriptStore = create<ITranscriptStore>()(
               // Step 2a: Remove entire clips that AI identified as bad takes
               if (result.clipsToRemove && result.clipsToRemove.length > 0) {
                 set({ processingStatus: `Removing ${result.clipsToRemove.length} duplicate/bad takes...` });
-                for (const clipIdToRemove of result.clipsToRemove) {
+                for (const clipToRemove of result.clipsToRemove) {
+                  // Handle both old format (string) and new format (object with clipId, clipIndex, reason)
+                  const clipId = typeof clipToRemove === 'string' ? clipToRemove : clipToRemove.clipId;
+                  const clipIndex = typeof clipToRemove === 'string'
+                    ? clipOrder.indexOf(clipToRemove) + 1
+                    : clipToRemove.clipIndex;
+                  const reason = typeof clipToRemove === 'string'
+                    ? 'Duplicate take'
+                    : clipToRemove.reason;
+
                   // Verify the clip exists before removing
-                  if (get().clips[clipIdToRemove]) {
-                    // Get clip index for a nice reason message
-                    const clipIndex = clipOrder.indexOf(clipIdToRemove) + 1;
-                    const reason = `AI detected: duplicate take (better version exists in another clip)`;
-                    removeClip(clipIdToRemove, reason);
+                  if (get().clips[clipId]) {
+                    removeClip(clipId, `Clip ${clipIndex}: ${reason}`);
                     clipsRemoved++;
-                    removedClipIds.push(clipIdToRemove);
-                    console.log(`[Auto-Magic] Removed clip ${clipIndex} - ${clipIdToRemove} (bad take)`);
+                    removedClipIds.push(clipId);
+                    console.log(`[Auto-Magic] Removed clip ${clipIndex} - ${clipId}: ${reason}`);
                   }
                 }
               }
@@ -1408,7 +1414,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
 
           // Step 3: Optimize pacing (set gap threshold)
           set({ processingStatus: "Optimizing pacing..." });
-          setGapThreshold(300); // Tighter pacing - cuts gaps >300ms
+          setGapThreshold(200); // Balanced - gaps >200ms get cut
 
           // Step 4: Smooth jump cuts - DISABLED by default
           // The alternating zoom was causing "shakiness" perception

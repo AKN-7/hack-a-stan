@@ -37,6 +37,15 @@ export const metadata = createMetadata({
   metadataBase: baseUrl
 });
 
+// Mobile-optimized viewport settings
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
+};
+
 export default async function RootLayout({
   children
 }: Readonly<{

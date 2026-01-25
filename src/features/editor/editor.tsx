@@ -21,10 +21,11 @@ import { FONTS } from "./data/fonts";
 import { dispatch } from "@designcombo/events";
 import { Transcript } from "./menu-item/transcript";
 import { design } from "./mock";
-import { ChevronLeft, ChevronRight, FileText, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileText, Sparkles, X } from "lucide-react";
 import { Chat } from "./menu-item/chat";
 import useTranscriptStore from "./store/use-transcript-store";
 import UploadLanding from "./upload-landing";
+import { useIsMobile } from "@/hooks/use-media-query";
 
 const stateManager = new StateManager({
 	size: {
@@ -35,11 +36,21 @@ const stateManager = new StateManager({
 
 const Editor = ({ tempId, id }: { tempId?: string; id?: string }) => {
 	const [projectName, setProjectName] = useState<string>("Untitled video");
-	const [isTranscriptOpen, setIsTranscriptOpen] = useState(true);
-	const [isChatOpen, setIsChatOpen] = useState(true);
+	const isMobile = useIsMobile();
+	// On mobile, panels are closed by default
+	const [isTranscriptOpen, setIsTranscriptOpen] = useState(!isMobile);
+	const [isChatOpen, setIsChatOpen] = useState(!isMobile);
 	const timelinePanelRef = useRef<ImperativePanelHandle>(null);
 	const sceneRef = useRef<SceneRef>(null);
 	const { timeline, playerRef, trackItemsMap } = useStore();
+
+	// Close panels when switching to mobile view
+	useEffect(() => {
+		if (isMobile) {
+			setIsTranscriptOpen(false);
+			setIsChatOpen(false);
+		}
+	}, [isMobile]);
 
 	// Check if we have any clips (show editor as soon as clips are added, even if transcribing)
 	const { clipOrder } = useTranscriptStore();
@@ -151,37 +162,75 @@ const Editor = ({ tempId, id }: { tempId?: string; id?: string }) => {
 				setProjectName={setProjectName}
 			/>
 			<div className="flex flex-1 relative overflow-hidden">
+				{/* Mobile backdrop */}
+				{isMobile && (isTranscriptOpen || isChatOpen) && (
+					<div
+						className="fixed inset-0 z-40 bg-black/50 transition-opacity duration-300"
+						onClick={() => {
+							setIsTranscriptOpen(false);
+							setIsChatOpen(false);
+						}}
+					/>
+				)}
+
 				{/* LEFT PANEL - Transcript */}
 				<div
-					className="flex flex-none bg-white border-r border-border h-[calc(100vh-56px)] shadow-sm w-[300px]"
+					className={`
+						flex flex-none bg-white border-r border-border shadow-sm
+						${isMobile
+							? 'fixed inset-y-0 left-0 z-50 w-full max-w-[320px] h-full'
+							: 'h-[calc(100vh-56px)] w-[300px]'
+						}
+					`}
 					style={{
 						transform: isTranscriptOpen ? 'translateX(0)' : 'translateX(-100%)',
-						marginRight: isTranscriptOpen ? 0 : -300,
+						marginRight: !isMobile && isTranscriptOpen ? 0 : !isMobile ? -300 : 0,
 						transition: 'transform 400ms cubic-bezier(0.4, 0, 0.2, 1), margin 400ms cubic-bezier(0.4, 0, 0.2, 1)',
 					}}
 				>
 					<Transcript />
 				</div>
 
-				{/* Left toggle button */}
-				<button
-					onClick={() => setIsTranscriptOpen(!isTranscriptOpen)}
-					className="absolute top-3 z-50 flex items-center justify-center w-8 h-8 rounded-full bg-white border border-border shadow-md hover:bg-muted cursor-pointer transition-colors"
-					style={{
-						left: isTranscriptOpen ? 288 : 12,
-						transition: 'left 400ms cubic-bezier(0.4, 0, 0.2, 1)',
-					}}
-				>
-					{isTranscriptOpen ? (
-						<ChevronLeft className="w-4 h-4 text-gray-600" />
-					) : (
-						<FileText className="w-4 h-4 text-gray-600" />
-					)}
-				</button>
+				{/* Left toggle button - Desktop: slides with panel. Mobile: different behavior */}
+				{!isMobile && (
+					<button
+						onClick={() => setIsTranscriptOpen(!isTranscriptOpen)}
+						className="absolute top-3 z-50 flex items-center justify-center w-8 h-8 rounded-full bg-white border border-border shadow-md hover:bg-muted cursor-pointer transition-all"
+						style={{
+							left: isTranscriptOpen ? 288 : 12,
+							transition: 'left 400ms cubic-bezier(0.4, 0, 0.2, 1)',
+						}}
+					>
+						{isTranscriptOpen ? (
+							<ChevronLeft className="w-4 h-4 text-gray-600" />
+						) : (
+							<FileText className="w-4 h-4 text-gray-600" />
+						)}
+					</button>
+				)}
+
+				{/* Mobile: Transcript button - shows on left when closed, slides to right when open */}
+				{isMobile && !isChatOpen && (
+					<button
+						onClick={() => setIsTranscriptOpen(!isTranscriptOpen)}
+						className="absolute top-4 z-50 flex items-center justify-center w-11 h-11 rounded-full bg-white border border-border shadow-lg hover:bg-muted cursor-pointer transition-all"
+						style={{
+							left: isTranscriptOpen ? 'auto' : 12,
+							right: isTranscriptOpen ? 12 : 'auto',
+							transition: 'all 400ms cubic-bezier(0.4, 0, 0.2, 1)',
+						}}
+					>
+						{isTranscriptOpen ? (
+							<X className="w-5 h-5 text-gray-600" />
+						) : (
+							<FileText className="w-5 h-5 text-gray-600" />
+						)}
+					</button>
+				)}
 
 				{/* CENTER - Video Preview & Timeline */}
 				<ResizablePanelGroup style={{ flex: 1 }} direction="vertical">
-					<ResizablePanel className="relative bg-muted" defaultSize={82}>
+					<ResizablePanel className="relative bg-muted" defaultSize={isMobile ? 75 : 82}>
 						<div className="flex h-full flex-1">
 							<div
 								style={{
@@ -200,7 +249,7 @@ const Editor = ({ tempId, id }: { tempId?: string; id?: string }) => {
 					<ResizablePanel
 						className="min-h-[50px]"
 						ref={timelinePanelRef}
-						defaultSize={18}
+						defaultSize={isMobile ? 25 : 18}
 						onResize={handleTimelineResize}
 					>
 						{playerRef && <Timeline />}
@@ -209,31 +258,58 @@ const Editor = ({ tempId, id }: { tempId?: string; id?: string }) => {
 
 				{/* RIGHT PANEL - AI Chat */}
 				<div
-					className="flex flex-col flex-none bg-white border-l border-border h-[calc(100vh-56px)] shadow-sm w-[400px] overflow-hidden"
+					className={`
+						flex flex-col flex-none bg-white border-l border-border shadow-sm overflow-hidden
+						${isMobile
+							? 'fixed inset-y-0 right-0 z-50 w-full max-w-[320px] h-full'
+							: 'h-[calc(100vh-56px)] w-[400px]'
+						}
+					`}
 					style={{
 						transform: isChatOpen ? 'translateX(0)' : 'translateX(100%)',
-						marginLeft: isChatOpen ? 0 : -400,
+						marginLeft: !isMobile && isChatOpen ? 0 : !isMobile ? -400 : 0,
 						transition: 'transform 400ms cubic-bezier(0.4, 0, 0.2, 1), margin 400ms cubic-bezier(0.4, 0, 0.2, 1)',
 					}}
 				>
 					<Chat />
 				</div>
 
-				{/* Right toggle button */}
-				<button
-					onClick={() => setIsChatOpen(!isChatOpen)}
-					className="absolute top-3 z-50 flex items-center justify-center w-8 h-8 rounded-full bg-white border border-border shadow-md hover:bg-muted cursor-pointer transition-colors"
-					style={{
-						right: isChatOpen ? 388 : 12,
-						transition: 'right 400ms cubic-bezier(0.4, 0, 0.2, 1)',
-					}}
-				>
-					{isChatOpen ? (
-						<ChevronRight className="w-4 h-4 text-gray-600" />
-					) : (
-						<Sparkles className="w-4 h-4 text-gray-600" />
-					)}
-				</button>
+				{/* Right toggle button - Desktop */}
+				{!isMobile && (
+					<button
+						onClick={() => setIsChatOpen(!isChatOpen)}
+						className="absolute top-3 z-50 flex items-center justify-center w-8 h-8 rounded-full bg-white border border-border shadow-md hover:bg-muted cursor-pointer transition-all"
+						style={{
+							right: isChatOpen ? 388 : 12,
+							transition: 'right 400ms cubic-bezier(0.4, 0, 0.2, 1)',
+						}}
+					>
+						{isChatOpen ? (
+							<ChevronRight className="w-4 h-4 text-gray-600" />
+						) : (
+							<Sparkles className="w-4 h-4 text-gray-600" />
+						)}
+					</button>
+				)}
+
+				{/* Mobile: AI Chat button - shows on right when closed, slides to left when open */}
+				{isMobile && !isTranscriptOpen && (
+					<button
+						onClick={() => setIsChatOpen(!isChatOpen)}
+						className="absolute top-4 z-50 flex items-center justify-center w-11 h-11 rounded-full bg-white border border-border shadow-lg hover:bg-muted cursor-pointer transition-all"
+						style={{
+							right: isChatOpen ? 'auto' : 12,
+							left: isChatOpen ? 12 : 'auto',
+							transition: 'all 400ms cubic-bezier(0.4, 0, 0.2, 1)',
+						}}
+					>
+						{isChatOpen ? (
+							<X className="w-5 h-5 text-gray-600" />
+						) : (
+							<Sparkles className="w-5 h-5 text-gray-600" />
+						)}
+					</button>
+				)}
 			</div>
 		</div>
 	);

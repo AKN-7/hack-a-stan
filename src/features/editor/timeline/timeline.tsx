@@ -25,22 +25,22 @@ const Timeline = () => {
             <OverlayTracks />
 
             {/* Main video track with integrated playhead */}
-            <div className="flex items-center flex-1 min-h-[60px] mb-4">
-              {/* Track label */}
-              <div className="flex items-center gap-1.5 px-3 w-20 shrink-0 text-xs font-medium text-muted-foreground">
+            <div className="flex items-center flex-1 min-h-[50px] md:min-h-[60px] mb-2 md:mb-4">
+              {/* Track label - hidden on mobile for more space */}
+              <div className="hidden md:flex items-center gap-1.5 px-3 w-20 shrink-0 text-xs font-medium text-muted-foreground">
                 <Film className="w-3.5 h-3.5" />
                 <span className="truncate">Main</span>
               </div>
 
-              {/* Track content */}
-              <div className="flex-1 h-full py-1">
+              {/* Track content - full width on mobile */}
+              <div className="flex-1 h-full py-1 px-2 md:px-0">
                 <TranscriptClipsTrack />
               </div>
             </div>
           </>
         ) : (
-          <div className="h-full flex items-center justify-center">
-            <span className="text-sm text-muted-foreground px-4 py-2 rounded-xl bg-white shadow-sm border border-border">
+          <div className="h-full flex items-center justify-center px-4">
+            <span className="text-xs md:text-sm text-muted-foreground px-3 md:px-4 py-2 rounded-xl bg-white shadow-sm border border-border text-center">
               Upload a video to get started
             </span>
           </div>

@@ -38,6 +38,7 @@ export const RemotionRoot: React.FC = () => {
           segments: [],
           durationMs: 1000,
           captions: [],
+          textOverlays: [],
         }}
       />
     </>

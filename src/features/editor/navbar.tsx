@@ -181,53 +181,54 @@ export default function Navbar({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: isLargeScreen ? "320px 1fr 320px" : "1fr 1fr 1fr"
+        gridTemplateColumns: isSmallScreen ? "auto 1fr auto" : isLargeScreen ? "320px 1fr 320px" : "1fr 1fr 1fr"
       }}
-      className="pointer-events-none flex h-14 items-center bg-white border-b border-border px-4 shadow-sm"
+      className="pointer-events-none flex h-14 items-center bg-white border-b border-border px-2 md:px-4 shadow-sm"
     >
       <DownloadProgressModal />
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 md:gap-3">
         <Dialog open={showResetDialog} onOpenChange={setShowResetDialog}>
           <DialogTrigger asChild>
-            <button className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-white shadow-sm hover:bg-primary/90 transition-colors cursor-pointer">
+            <button className="pointer-events-auto flex h-9 w-9 md:h-10 md:w-10 items-center justify-center rounded-xl bg-primary text-white shadow-sm hover:bg-primary/90 transition-colors cursor-pointer">
               <LogoIcons.scenify />
             </button>
           </DialogTrigger>
-          <DialogContent showCloseButton={false}>
+          <DialogContent showCloseButton={false} className="w-[90vw] max-w-md mx-auto">
             <DialogHeader>
               <DialogTitle>Start a new project?</DialogTitle>
               <DialogDescription>
                 This will clear all your current clips and edits. You'll be taken back to the upload screen to start fresh.
               </DialogDescription>
             </DialogHeader>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowResetDialog(false)}>
+            <DialogFooter className="flex-col sm:flex-row gap-2">
+              <Button variant="outline" onClick={() => setShowResetDialog(false)} className="w-full sm:w-auto">
                 Cancel
               </Button>
-              <Button onClick={handleReset} className="bg-red-500 hover:bg-red-600 text-white">
+              <Button onClick={handleReset} className="bg-red-500 hover:bg-red-600 text-white w-full sm:w-auto">
                 Clear & Start Over
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
 
-        <div className="pointer-events-auto flex h-9 items-center gap-1 rounded-lg bg-muted px-1">
+        {/* Undo/Redo - always visible but more compact on mobile */}
+        <div className="pointer-events-auto flex h-8 md:h-9 items-center gap-0.5 md:gap-1 rounded-lg bg-muted px-0.5 md:px-1">
           <Button
             onClick={handleUndo}
-            className="text-muted-foreground hover:text-foreground hover:bg-white"
+            className="text-muted-foreground hover:text-foreground hover:bg-white h-7 w-7 md:h-8 md:w-8"
             variant="ghost"
             size="icon"
           >
-            <Icons.undo width={18} />
+            <Icons.undo width={isSmallScreen ? 16 : 18} />
           </Button>
           <Button
             onClick={handleRedo}
-            className="text-muted-foreground hover:text-foreground hover:bg-white"
+            className="text-muted-foreground hover:text-foreground hover:bg-white h-7 w-7 md:h-8 md:w-8"
             variant="ghost"
             size="icon"
           >
-            <Icons.redo width={18} />
+            <Icons.redo width={isSmallScreen ? 16 : 18} />
           </Button>
         </div>
       </div>
@@ -246,7 +247,7 @@ export default function Navbar({
         )}
       </div>
 
-      <div className="flex h-11 items-center justify-end gap-3">
+      <div className="flex h-11 items-center justify-end gap-2 md:gap-3">
         <div className="pointer-events-auto flex h-10 items-center">
           <DownloadPopover stateManager={stateManager} />
         </div>
@@ -257,6 +258,7 @@ export default function Navbar({
 
 const DownloadPopover = ({ stateManager }: { stateManager: StateManager }) => {
   const isMediumScreen = useIsMediumScreen();
+  const isSmallScreen = useIsSmallScreen();
   const { actions, exportType } = useDownloadState();
   const [isExportTypeOpen, setIsExportTypeOpen] = useState(false);
   const [open, setOpen] = useState(false);
@@ -277,16 +279,17 @@ const DownloadPopover = ({ stateManager }: { stateManager: StateManager }) => {
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
-          className="flex h-9 gap-2 rounded-lg bg-primary hover:bg-primary/90 text-white font-semibold shadow-md shadow-primary/25 transition-all duration-200 border-0"
+          className="flex h-8 md:h-9 gap-1.5 md:gap-2 rounded-lg bg-primary hover:bg-primary/90 text-white font-semibold shadow-md shadow-primary/25 transition-all duration-200 border-0 px-2.5 md:px-3"
           size={isMediumScreen ? "sm" : "icon"}
         >
-          <Download width={16} />
+          <Download width={isSmallScreen ? 14 : 16} />
           <span className="hidden md:block">Export</span>
         </Button>
       </PopoverTrigger>
       <PopoverContent
         align="end"
         className="z-[250] flex w-60 flex-col gap-4 bg-white border border-border shadow-xl rounded-xl"
+        sideOffset={8}
       >
         <Label>Export settings</Label>
 

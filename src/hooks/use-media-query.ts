@@ -36,3 +36,18 @@ export function useIsMediumScreen(): boolean {
 export function useIsSmallScreen(): boolean {
   return useMediaQuery("(max-width: 767px)");
 }
+
+// Mobile-specific hook (true when on mobile device width)
+export function useIsMobile(): boolean {
+  return useMediaQuery("(max-width: 767px)");
+}
+
+// Tablet hook (768px - 1023px)
+export function useIsTablet(): boolean {
+  return useMediaQuery("(min-width: 768px) and (max-width: 1023px)");
+}
+
+// Touch device detection
+export function useIsTouchDevice(): boolean {
+  return useMediaQuery("(hover: none) and (pointer: coarse)");
+}

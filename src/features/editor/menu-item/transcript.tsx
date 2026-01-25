@@ -246,18 +246,19 @@ export const Transcript = () => {
     <div className="flex flex-1 flex-col h-full bg-white">
       <ModalUpload />
       {/* Header */}
-      <div className="flex h-14 flex-none items-center justify-between px-4 border-b border-border">
+      <div className="flex h-14 flex-none items-center justify-between px-3 md:px-4 border-b border-border">
         <span className="text-base font-semibold text-foreground">Transcript</span>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 md:gap-2">
           {selectedWordIds.size > 0 && (
             <Button
               variant="ghost"
               size="sm"
               onClick={handleDeleteSelected}
-              className="h-8 px-3 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg font-medium"
+              className="h-8 px-2 md:px-3 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg font-medium text-xs md:text-sm"
             >
-              <Trash2 className="w-4 h-4 mr-1.5" />
-              Delete ({selectedWordIds.size})
+              <Trash2 className="w-4 h-4 md:mr-1.5" />
+              <span className="hidden md:inline">Delete ({selectedWordIds.size})</span>
+              <span className="md:hidden">{selectedWordIds.size}</span>
             </Button>
           )}
           {hasDeletedWords && (
@@ -265,10 +266,10 @@ export const Transcript = () => {
               variant="ghost"
               size="sm"
               onClick={handleRestoreAll}
-              className="h-8 px-3 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg font-medium"
+              className="h-8 px-2 md:px-3 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg font-medium text-xs md:text-sm"
             >
-              <RotateCcw className="w-4 h-4 mr-1.5" />
-              Restore
+              <RotateCcw className="w-4 h-4 md:mr-1.5" />
+              <span className="hidden md:inline">Restore</span>
             </Button>
           )}
         </div>
@@ -372,22 +373,22 @@ export const Transcript = () => {
               )}>
                 {/* Clip Header */}
                 <div className={cn(
-                  "flex items-center gap-3 px-4 py-3 sticky top-0 z-10 border-b border-border/50",
+                  "flex items-center gap-2 md:gap-3 px-3 md:px-4 py-2 md:py-3 sticky top-0 z-10 border-b border-border/50",
                   isClipDeleted ? "bg-red-50" : "bg-white"
                 )}>
                   {/* Color indicator dot */}
                   <div className={cn(
-                    "w-3 h-3 rounded-full shadow-sm",
+                    "w-2.5 h-2.5 md:w-3 md:h-3 rounded-full shadow-sm shrink-0",
                     isClipDeleted ? "bg-red-400" : color.bg
                   )} />
 
                   <span className={cn(
-                    "text-sm font-semibold flex-1",
+                    "text-sm font-semibold flex-1 truncate",
                     isClipDeleted ? "text-red-700 line-through" : "text-foreground"
                   )}>
                     Clip {index + 1}
                     {isClipDeleted && (
-                      <span className="ml-2 text-xs font-normal text-red-500 no-underline">
+                      <span className="ml-1 md:ml-2 text-xs font-normal text-red-500 no-underline">
                         (removed)
                       </span>
                     )}
@@ -395,7 +396,7 @@ export const Transcript = () => {
 
                   {!isClipDeleted && (
                     <span className={cn(
-                      "text-xs font-medium px-2 py-0.5 rounded-md",
+                      "text-xs font-medium px-1.5 md:px-2 py-0.5 rounded-md shrink-0",
                       color.light, color.text
                     )}>
                       {formatDuration(clipDurationMs)}
@@ -407,11 +408,11 @@ export const Transcript = () => {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-3 text-xs font-medium text-green-600 hover:text-green-700 hover:bg-green-50 rounded-lg"
+                      className="h-8 md:h-7 px-2 md:px-3 text-xs font-medium text-green-600 hover:text-green-700 hover:bg-green-50 rounded-lg touch-target"
                       onClick={() => restoreClip(clipId)}
                     >
-                      <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
-                      Restore
+                      <RotateCcw className="w-3.5 h-3.5 md:mr-1.5" />
+                      <span className="hidden md:inline">Restore</span>
                     </Button>
                   ) : (
                     /* Reorder Buttons */
@@ -419,7 +420,7 @@ export const Transcript = () => {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-7 w-7 rounded-lg hover:bg-muted"
+                        className="h-8 w-8 md:h-7 md:w-7 rounded-lg hover:bg-muted"
                         disabled={index === 0}
                         onClick={() => {
                           const newOrder = [...clipOrder];
@@ -432,7 +433,7 @@ export const Transcript = () => {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-7 w-7 rounded-lg hover:bg-muted"
+                        className="h-8 w-8 md:h-7 md:w-7 rounded-lg hover:bg-muted"
                         disabled={index === clipOrder.length - 1}
                         onClick={() => {
                           const newOrder = [...clipOrder];
@@ -445,7 +446,7 @@ export const Transcript = () => {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-7 w-7 rounded-lg text-muted-foreground hover:text-red-500 hover:bg-red-50"
+                        className="h-8 w-8 md:h-7 md:w-7 rounded-lg text-muted-foreground hover:text-red-500 hover:bg-red-50"
                         onClick={() => removeClip(clipId)}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
@@ -534,9 +535,9 @@ export const Transcript = () => {
 
       {/* Stats footer */}
       {unifiedTranscript.length > 0 && (
-        <div className="px-4 py-3 border-t border-border bg-muted/30">
+        <div className="px-3 md:px-4 py-2 md:py-3 border-t border-border bg-muted/30">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2 md:gap-4 text-xs md:text-sm text-muted-foreground">
               <span className="font-medium">
                 {unifiedTranscript.filter((w) => !w.isDeleted).length} words
               </span>
@@ -546,9 +547,9 @@ export const Transcript = () => {
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary/10 text-primary">
-              <Clock className="w-3.5 h-3.5" />
-              <span className="text-sm font-semibold">
+            <div className="flex items-center gap-1.5 md:gap-2 px-2 md:px-3 py-1 md:py-1.5 rounded-lg bg-primary/10 text-primary">
+              <Clock className="w-3 h-3 md:w-3.5 md:h-3.5" />
+              <span className="text-xs md:text-sm font-semibold">
                 {formatDuration(getTotalDurationMs())}
               </span>
             </div>

@@ -37,31 +37,34 @@ export async function POST(request: NextRequest) {
 
     const systemPrompt = `You are an expert video editor creating ONE polished video from multiple raw clips.
 
-PHILOSOPHY: Every clip has value. Your job is to SALVAGE and STITCH content intelligently, not just delete. Deleting a clip should be the LAST resort when it truly adds nothing.
+CRITICAL: DETECT DUPLICATE TAKES
+Creators often record the same section multiple times. Look for:
+- Multiple "intro" clips ("Hi, I'm...", "I'm a founder at...")
+- Same topic explained with slightly different wording
+- Re-recorded sections where the creator started over
 
-CRITICAL ANALYSIS APPROACH:
-1. NEVER delete a clip just because another clip covers similar ground - instead, find what's UNIQUE in each clip
-2. Look for complementary content: different examples, different phrasings, additional details
-3. Stitch together the BEST PARTS from multiple takes - don't just pick one and discard the rest
-4. Use wordCuts surgically to extract good segments and remove bad ones within each clip
+When you find duplicate takes of the SAME CONTENT:
+1. Pick the BEST take (cleaner delivery, more confident, better phrasing)
+2. PUT THE WORSE TAKE(S) IN clipsToRemove — do NOT keep both
+3. "Slightly different wording" does NOT mean "unique content" — it means re-take
 
-WHAT TO SALVAGE (use wordCuts to extract these from "bad" clips):
-- Unique examples or stories not in other clips
-- Better explanations of specific points
-- Stronger emotional moments or emphasis
-- Good one-liners or quotable moments
-- Additional context that enriches the narrative
+WHAT COUNTS AS DUPLICATE TAKES (REMOVE THE WORSE ONE):
+- Two clips both introducing themselves ("I'm X at Y company")
+- Two clips explaining the same concept with minor word differences
+- Two clips that serve the same PURPOSE even if words differ slightly
 
-WHEN TO ACTUALLY REMOVE A CLIP (clipsToRemove):
-- The clip is 100% duplicate with nothing unique (identical words, same delivery)
-- The clip is completely unusable (all filler, all stammering, makes no sense)
-- The clip contradicts other clips and is clearly the wrong version
+WHAT COUNTS AS UNIQUE CONTENT (KEEP BOTH):
+- Different topics, examples, or stories
+- Additional details not covered in other clips
+- Genuinely new information
+
+PHILOSOPHY: Keep unique content, remove redundant takes. A final video should NOT have the creator introducing themselves twice or explaining the same thing twice with different words.
 
 ORDERING STRATEGY:
-- **Intro** (greeting/name) → FIRST
-- **Hook/Strongest Point** → Consider moving the most compelling moment near the start
+- **Hook** → FIRST (the most compelling/attention-grabbing statement - numbers, bold claims)
+- **Intro** (greeting/name) → After hook or at start if no hook
 - **Body content** → Logical flow, building on previous points
-- **Examples/Stories** → Weave in throughout for engagement
+- **Examples/Stories** → Weave in for engagement
 - **Outro** (thanks/goodbye) → LAST
 
 WORD CUTS (be surgical):
@@ -78,8 +81,14 @@ WORD CUTS (be surgical):
 
 Return JSON:
 {
-  "suggestedOrder": ["clipId1", "clipId2"],  // Order of ALL clips to KEEP (try to keep most clips!)
-  "clipsToRemove": ["clipId3"],   // ONLY clips that are truly 100% unusable - be conservative here
+  "suggestedOrder": ["clipId1", "clipId2"],  // Order of ALL clips to KEEP
+  "clipsToRemove": [
+    {
+      "clipId": "clipId3",
+      "clipIndex": 3,
+      "reason": "Duplicate intro - better delivery in Clip 1"
+    }
+  ],
   "wordCuts": [
     {
       "clipId": "...",
@@ -89,7 +98,7 @@ Return JSON:
     }
   ],
   "textHook": "The compelling hook text for the first 4 seconds",
-  "reasoning": "Brief explanation of how you salvaged content from each clip"
+  "reasoning": "Brief explanation of editing decisions"
 }`;
 
     const userPrompt = `Analyze these ${clips.length} clips to create ONE polished video.
@@ -100,18 +109,26 @@ ${transcriptContext}
 WORD IDS (use these exact IDs in wordCuts):
 ${wordsContext}
 
-SMART EDITING APPROACH:
-- DON'T just delete clips because they overlap - find what's UNIQUE in each one
-- Multiple intro takes? Pick the best ONE for intro, but check if others have unique content worth keeping later
-- Use wordCuts to surgically extract good segments from "weaker" clips
-- STITCH content: Clip 2 might have a better example, Clip 3 might have better energy on one sentence
-- Only put a clip in clipsToRemove if it's truly 100% duplicate with zero unique value
+DUPLICATE DETECTION (CRITICAL):
+1. First, identify clips that cover the SAME content (intros, same explanation, re-takes)
+2. For each group of duplicates, pick the BEST one and put others in clipsToRemove
+3. "I'm a founder at X" and "I'm founding engineer at X" = SAME INTRO, keep only one
+4. Two explanations of the same thing with different words = DUPLICATE, keep the better one
+
+WHAT TO KEEP:
+- ONE intro (the best take)
+- Each UNIQUE topic/example/story (only once, best version)
+- The hook/attention-grabber
+
+WHAT TO REMOVE (clipsToRemove):
+- Worse takes of the same intro
+- Redundant explanations of the same content
+- Re-recorded sections where another take is better
 
 TECHNICAL NOTES:
-- If you see "I built X I built X" - that's stammering, cut the first occurrence using wordCuts
-- Greeting/intro clips ("Hi, I'm...") should be FIRST in suggestedOrder
 - Use the actual clipId values (like "${clips[0]?.clipId}") not "clipId1"
 - Use actual word IDs from above for wordCuts
+- suggestedOrder should only include clips you're KEEPING (not in clipsToRemove)
 
 Return ONLY valid JSON.`;
 
@@ -133,7 +150,7 @@ Return ONLY valid JSON.`;
     // Parse the JSON response
     let result = {
       suggestedOrder: [] as string[],
-      clipsToRemove: [] as string[],
+      clipsToRemove: [] as Array<{ clipId: string; clipIndex: number; reason: string }>,
       wordCuts: [] as Array<{ clipId: string; wordIds: string[]; reason: string; text: string }>,
       textHook: "" as string,
       reasoning: "",
@@ -144,9 +161,27 @@ Return ONLY valid JSON.`;
       const jsonMatch = responseText.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
+
+        // Handle clipsToRemove - could be array of strings (old format) or objects (new format)
+        let clipsToRemove: Array<{ clipId: string; clipIndex: number; reason: string }> = [];
+        if (Array.isArray(parsed.clipsToRemove)) {
+          clipsToRemove = parsed.clipsToRemove.map((item: any, idx: number) => {
+            if (typeof item === 'string') {
+              // Old format - just clipId string
+              return { clipId: item, clipIndex: idx + 1, reason: 'Duplicate take' };
+            }
+            // New format - object with clipId, clipIndex, reason
+            return {
+              clipId: item.clipId || item,
+              clipIndex: item.clipIndex || idx + 1,
+              reason: item.reason || 'Duplicate take',
+            };
+          });
+        }
+
         result = {
           suggestedOrder: parsed.suggestedOrder || [],
-          clipsToRemove: parsed.clipsToRemove || [],
+          clipsToRemove,
           wordCuts: parsed.wordCuts || [],
           textHook: parsed.textHook || "",
           reasoning: parsed.reasoning || "",

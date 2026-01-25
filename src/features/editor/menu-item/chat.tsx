@@ -457,14 +457,14 @@ export function Chat() {
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* Messages */}
       <ScrollArea className="flex-1 min-h-0 w-full">
-        <div className="flex flex-col min-h-full w-full px-4">
+        <div className="flex flex-col min-h-full w-full px-3 md:px-4">
           <div className="flex-1" />
-          <div className="space-y-4 py-4 w-full">
+          <div className="space-y-3 md:space-y-4 py-3 md:py-4 w-full">
             {/* Empty state */}
             {messages.length === 0 && !magicProcessingResult && !isProcessing && (
-              <div className="text-center text-sm text-muted-foreground py-8">
-                <Sparkles className="h-8 w-8 mx-auto mb-3 text-primary/50" />
-                <p className="font-medium mb-1">AI Video Editor</p>
+              <div className="text-center text-sm text-muted-foreground py-6 md:py-8">
+                <Sparkles className="h-7 w-7 md:h-8 md:w-8 mx-auto mb-2 md:mb-3 text-primary/50" />
+                <p className="font-medium mb-1 text-sm md:text-base">AI Video Editor</p>
                 <p className="text-xs">
                   Ask me to edit your video, remove filler words, or generate B-roll.
                 </p>
@@ -523,17 +523,17 @@ export function Chat() {
 
       {/* Quick Actions */}
       {messages.length === 0 && (
-        <div className="shrink-0 px-4 pb-2 overflow-hidden">
+        <div className="shrink-0 px-3 md:px-4 pb-2 overflow-hidden">
           <div
             ref={quickActionsRef}
-            className="flex gap-2 overflow-x-auto scrollbar-hide"
+            className="flex gap-1.5 md:gap-2 overflow-x-auto scrollbar-hide"
           >
             {QUICK_ACTIONS.map((action) => (
               <Button
                 key={action.label}
                 variant="outline"
                 size="sm"
-                className="text-xs h-7 shrink-0 whitespace-nowrap"
+                className="text-xs h-8 md:h-7 shrink-0 whitespace-nowrap px-2.5 md:px-3"
                 onClick={() => handleQuickAction(action.prompt)}
               >
                 {action.label}
@@ -544,7 +544,7 @@ export function Chat() {
       )}
 
       {/* Input */}
-      <div className="shrink-0 border-t border-border/50 p-4 w-full min-w-0">
+      <div className="shrink-0 border-t border-border/50 p-3 md:p-4 w-full min-w-0">
         <form onSubmit={handleSubmit} className="w-full min-w-0">
           <div className="flex flex-col gap-1 rounded-2xl border bg-background px-3 py-2 shadow-sm w-full min-w-0">
             <textarea
@@ -556,13 +556,13 @@ export function Chat() {
               disabled={isLoading}
               className="max-h-32 w-full min-w-0 resize-none border-0 bg-transparent px-0 py-1 text-sm outline-none focus:ring-0 disabled:cursor-not-allowed disabled:opacity-50 overflow-y-auto"
               rows={1}
-              style={{ minHeight: '1.5rem' }}
+              style={{ minHeight: '1.5rem', fontSize: '16px' }}
             />
             <div className="flex items-center justify-between -mx-1">
               <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground"
+                  className="inline-flex h-9 w-9 md:h-8 md:w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-opacity hover:bg-muted hover:text-foreground"
                   aria-label="Attach file"
                 >
                   <Paperclip className="h-4 w-4" />
@@ -571,7 +571,7 @@ export function Chat() {
                   <button
                     type="button"
                     onClick={clearMessages}
-                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-opacity hover:bg-red-50 hover:text-red-500"
+                    className="inline-flex h-9 w-9 md:h-8 md:w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-opacity hover:bg-red-50 hover:text-red-500"
                     aria-label="Clear conversation"
                     title="Clear conversation"
                   >
@@ -582,7 +582,7 @@ export function Chat() {
               <button
                 type="submit"
                 disabled={!input.trim() || isLoading}
-                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs transition-opacity disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90"
+                className="inline-flex h-9 w-9 md:h-8 md:w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs transition-opacity disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90"
                 aria-label="Send message"
               >
                 {isLoading ? (
@@ -830,7 +830,6 @@ function MagicProcessingSummary({ result, onDismiss }: { result: MagicProcessing
               <div className="pl-5 space-y-1">
                 {result.removedClipIds.map((clipId) => {
                   const clip = clips[clipId];
-                  const clipIndex = clipOrder.indexOf(clipId) + 1;
                   const isDeleted = clip?.isDeleted;
                   return (
                     <div key={clipId} className="flex items-center justify-between text-xs">
@@ -838,7 +837,7 @@ function MagicProcessingSummary({ result, onDismiss }: { result: MagicProcessing
                         "truncate",
                         isDeleted ? "text-muted-foreground" : "text-green-600 line-through"
                       )}>
-                        Clip {clipIndex}: {clip?.deleteReason || "Duplicate take"}
+                        {clip?.deleteReason || "Duplicate take"}
                       </span>
                       {isDeleted ? (
                         <button
