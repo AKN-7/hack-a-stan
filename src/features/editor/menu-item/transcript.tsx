@@ -1118,7 +1118,7 @@ export const Transcript = () => {
                   onClick={handleDeleteSelected}
                 >
                   <Scissors className="w-3.5 h-3.5 mr-1.5" />
-                  Waffle it
+                  Cut
                 </button>
               )}
               <button

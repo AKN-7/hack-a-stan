@@ -362,61 +362,75 @@ const Composition = () => {
     return filtered;
   }, [groupedItems, hasTranscriptData, trackItemsMap]);
 
-  // Prefetch all video/audio sources for smooth playback
-  useEffect(() => {
-    const urlsToFetch: string[] = [];
+  // Collect all URLs to prefetch - memoized to prevent unnecessary re-prefetching
+  const urlsToFetch = useMemo(() => {
+    const urls: string[] = [];
 
     // Add regular render segment URLs
     if (renderSegments.length > 0) {
-      urlsToFetch.push(...renderSegments.map(s => s.clipUrl));
+      urls.push(...renderSegments.map(s => s.clipUrl));
     }
 
     // Add B-roll URLs if in audio+broll mode
     if (isAudioBrollMode && brollAssignments.length > 0) {
-      urlsToFetch.push(...brollAssignments.map(a => a.clipUrl));
+      urls.push(...brollAssignments.map(a => a.clipUrl));
     }
 
     // Add audio segment URLs if in audio+broll mode
     if (isAudioBrollMode && audioSegments.length > 0) {
-      urlsToFetch.push(...audioSegments.map(s => s.clipUrl));
+      urls.push(...audioSegments.map(s => s.clipUrl));
     }
 
     // Add mixed mode B-roll URLs
     if (mixedModeBrollAssignments.length > 0) {
-      urlsToFetch.push(...mixedModeBrollAssignments.map(a => a.clipUrl));
+      urls.push(...mixedModeBrollAssignments.map(a => a.clipUrl));
     }
 
     // Add background music URLs
     if (backgroundMusicClips.length > 0) {
-      urlsToFetch.push(...backgroundMusicClips.map(m => m.url));
+      urls.push(...backgroundMusicClips.map(m => m.url));
     }
 
+    return [...new Set(urls)];
+  }, [renderSegments, isAudioBrollMode, brollAssignments, audioSegments, mixedModeBrollAssignments, backgroundMusicClips]);
+
+  // Stable URL string for dependency comparison (prevents re-prefetch on every render)
+  const urlsKey = useMemo(() => urlsToFetch.sort().join('|'), [urlsToFetch]);
+
+  // Prefetch all video/audio sources for smooth playback
+  useEffect(() => {
     if (urlsToFetch.length === 0) return;
 
-    const uniqueUrls = [...new Set(urlsToFetch)];
-    const freedSet = new Set<string>();
+    console.log(`[Prefetch] Starting prefetch for ${urlsToFetch.length} URLs`);
 
-    const prefetchers = uniqueUrls.map(url => {
+    const prefetchHandles: Array<{ url: string; handle: ReturnType<typeof prefetch> }> = [];
+
+    // Start prefetching all URLs
+    for (const url of urlsToFetch) {
       try {
-        return { url, handle: prefetch(url, { method: 'blob-url' }) };
-      } catch {
-        return null;
+        const handle = prefetch(url, { method: 'blob-url' });
+        prefetchHandles.push({ url, handle });
+
+        // Log when each prefetch completes
+        handle.waitUntilDone()
+          .then(() => console.log(`[Prefetch] Loaded: ${url.slice(-30)}`))
+          .catch((err) => console.warn(`[Prefetch] Failed: ${url.slice(-30)}`, err));
+      } catch (err) {
+        console.error(`[Prefetch] Error starting prefetch for ${url}:`, err);
       }
-    });
+    }
 
     return () => {
-      prefetchers.forEach(p => {
-        if (p && !freedSet.has(p.url)) {
-          freedSet.add(p.url);
-          try {
-            p.handle.free();
-          } catch {
-            // Already freed or invalid - silently ignore
-          }
+      // Cleanup: free all prefetch handles
+      for (const { url, handle } of prefetchHandles) {
+        try {
+          handle.free();
+        } catch {
+          // Already freed - ignore
         }
-      });
+      }
     };
-  }, [renderSegments, isAudioBrollMode, brollAssignments, audioSegments, mixedModeBrollAssignments, backgroundMusicClips]);
+  }, [urlsKey]); // Only re-run when the actual set of URLs changes
 
   // Pre-calculate frame positions using cumulative approach to avoid rounding drift
   const segmentFrames = useMemo(
@@ -472,7 +486,7 @@ const Composition = () => {
           key={`broll-${assignment.clipId}-${index}`}
           from={startFrame}
           durationInFrames={durationInFrames}
-          premountFor={fps}
+          premountFor={10}
         >
           <AbsoluteFill style={{ overflow: "hidden" }}>
             <Video
@@ -602,7 +616,7 @@ const Composition = () => {
               key={`transcript-${segment.clipId}-${index}`}
               from={startFrame}
               durationInFrames={durationInFrames}
-              premountFor={fps}
+              premountFor={10}
             >
               {isAudioOnly ? (
                 // Audio-only clip: render just the audio (black screen with captions)
@@ -662,7 +676,7 @@ const Composition = () => {
               key={`mixed-broll-${assignment.clipId}-${index}`}
               from={startFrame}
               durationInFrames={durationInFrames}
-              premountFor={fps}
+              premountFor={10}
             >
               <AbsoluteFill style={{ overflow: "hidden" }}>
                 <Video
