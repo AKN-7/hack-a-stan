@@ -2,8 +2,9 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
-import { Upload, Sparkles, Video, Music, Check } from "lucide-react";
+import { Upload, Video, Music, Check } from "lucide-react";
 import useUploadStore from "./store/use-upload-store";
+import { ThreeDMarquee } from "@/components/ui/3d-marquee";
 
 interface UploadWithThumbnail {
   id: string;
@@ -160,34 +161,65 @@ const UploadLanding = () => {
     onDragLeave: () => setIsDragging(false),
   });
 
+  // Sample images for the 3D marquee - using placeholder video thumbnails
+  const marqueeImages = [
+    "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=300&fit=crop",
+    "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=400&h=300&fit=crop",
+    "https://images.unsplash.com/photo-1507591064344-4c6ce005b128?w=400&h=300&fit=crop",
+    "https://images.unsplash.com/photo-1494790108755-2616b612b890?w=400&h=300&fit=crop",
+    "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&h=300&fit=crop",
+    "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400&h=300&fit=crop",
+    "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=400&h=300&fit=crop",
+    "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&h=300&fit=crop",
+    "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=400&h=300&fit=crop",
+    "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=400&h=300&fit=crop",
+    "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=400&h=300&fit=crop",
+    "https://images.unsplash.com/photo-1489424731084-a5d8b219a5bb?w=400&h=300&fit=crop",
+    "https://images.unsplash.com/photo-1504593811423-6dd665756598?w=400&h=300&fit=crop",
+    "https://images.unsplash.com/photo-1502823403499-6ccfcf4fb453?w=400&h=300&fit=crop",
+    "https://images.unsplash.com/photo-1521119989659-a83eee488004?w=400&h=300&fit=crop",
+    "https://images.unsplash.com/photo-1531123897727-8f129e1688ce?w=400&h=300&fit=crop",
+  ];
+
   return (
     <div
       {...getRootProps()}
       className={`
         fixed inset-0 z-50 flex items-center justify-center
-        bg-gradient-to-br from-zinc-950 via-zinc-900 to-black
+        bg-white
         transition-all duration-300 safe-area-inset
-        ${isDragging ? "bg-primary/5" : ""}
+        ${isDragging ? "bg-primary/10" : ""}
       `}
     >
       <input {...getInputProps()} />
 
+      {/* 3D Marquee Background */}
+      {!isUploading && (
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+          <ThreeDMarquee
+            images={marqueeImages}
+            className="h-full w-full opacity-20"
+          />
+        </div>
+      )}
+
       {/* Main content */}
-      <div className="flex flex-col items-center justify-center gap-6 md:gap-8 p-4 md:p-8 max-w-2xl text-center w-full">
+      <div className="relative z-10 flex flex-col items-center justify-center gap-6 md:gap-8 p-4 md:p-8 max-w-2xl text-center w-full">
         {/* Logo/Brand area */}
-        <div className="flex items-center gap-2 text-white/80">
-          <Sparkles className="w-5 h-5" />
-          <span className="text-lg font-medium tracking-tight">Expound</span>
+        <div className="flex items-center gap-2">
+          <span className="text-5xl md:text-7xl font-bold tracking-tight text-primary" style={{ fontFamily: 'var(--font-sora), sans-serif' }}>
+            Distill
+          </span>
         </div>
 
         {isUploading && uploadsWithThumbnails.length > 0 ? (
           // Upload progress with thumbnails
           <div className="flex flex-col items-center gap-6 w-full">
             <div className="space-y-2">
-              <h1 className="text-2xl font-semibold text-white">
+              <h1 className="text-2xl font-bold text-primary">
                 Uploading {uploadsWithThumbnails.length} file{uploadsWithThumbnails.length > 1 ? "s" : ""}
               </h1>
-              <p className="text-zinc-400">
+              <p className="font-semibold text-foreground">
                 Your media will be transcribed automatically
               </p>
             </div>
@@ -198,7 +230,7 @@ const UploadLanding = () => {
               {uploadsWithThumbnails.map((upload) => (
                 <div
                   key={upload.id}
-                  className="relative aspect-[9/16] rounded-lg overflow-hidden bg-zinc-800 border border-zinc-700"
+                  className="relative aspect-[9/16] rounded-lg overflow-hidden bg-white border-2 border-border"
                 >
                   {/* Thumbnail */}
                   {upload.thumbnail ? (
@@ -208,23 +240,23 @@ const UploadLanding = () => {
                       className="w-full h-full object-cover"
                     />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-zinc-800 to-zinc-900">
+                    <div className="w-full h-full flex items-center justify-center bg-muted">
                       {upload.file.type.startsWith("audio/") ? (
-                        <Music className="w-6 h-6 text-zinc-500" />
+                        <Music className="w-6 h-6 text-muted-foreground" />
                       ) : (
-                        <Video className="w-6 h-6 text-zinc-600" />
+                        <Video className="w-6 h-6 text-muted-foreground" />
                       )}
                     </div>
                   )}
 
                   {/* Progress overlay */}
                   {upload.status !== "uploaded" && (
-                    <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center gap-2">
-                      <span className="text-white text-sm font-medium">
+                    <div className="absolute inset-0 bg-white/95 flex flex-col items-center justify-center gap-2">
+                      <span className="text-primary text-sm font-bold">
                         {upload.progress}%
                       </span>
                       {/* Progress bar */}
-                      <div className="w-3/4 h-1 bg-zinc-700 rounded-full overflow-hidden">
+                      <div className="w-3/4 h-2 bg-border rounded-full overflow-hidden border border-border">
                         <div
                           className="h-full bg-primary rounded-full transition-all duration-300"
                           style={{ width: `${upload.progress}%` }}
@@ -235,16 +267,16 @@ const UploadLanding = () => {
 
                   {/* Completed checkmark */}
                   {upload.status === "uploaded" && (
-                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                      <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center">
-                        <Check className="w-5 h-5 text-white" />
+                    <div className="absolute inset-0 bg-white/90 flex items-center justify-center">
+                      <div className="w-10 h-10 rounded-full bg-green-500 flex items-center justify-center border-2 border-green-600">
+                        <Check className="w-6 h-6 text-white" />
                       </div>
                     </div>
                   )}
 
                   {/* File name */}
-                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-2">
-                    <p className="text-xs text-white truncate">
+                  <div className="absolute bottom-0 left-0 right-0 bg-white p-2 border-t-2 border-border">
+                    <p className="text-xs text-foreground truncate font-bold">
                       {upload.file.name}
                     </p>
                   </div>
@@ -254,7 +286,7 @@ const UploadLanding = () => {
             </div>
 
             {/* Overall progress */}
-            <div className="text-sm text-zinc-500">
+            <div className="text-sm font-semibold text-foreground">
               {uploadsWithThumbnails.filter(u => u.status === "uploaded").length} of {uploadsWithThumbnails.length} uploaded
             </div>
           </div>
@@ -265,43 +297,48 @@ const UploadLanding = () => {
             <div
               onClick={open}
               className={`
-                relative w-full aspect-[4/3] md:aspect-[4/3] max-w-sm md:max-w-md rounded-2xl md:rounded-3xl cursor-pointer
-                border-2 border-dashed transition-all duration-300
+                group relative w-full aspect-[4/3] md:aspect-[4/3] max-w-sm md:max-w-md rounded-2xl md:rounded-3xl cursor-pointer
+                border-4 border-dashed transition-all duration-300 bg-white
                 flex flex-col items-center justify-center gap-4 md:gap-6 p-6 md:p-8
                 ${isDragging
-                  ? "border-primary bg-primary/10 scale-105"
-                  : "border-zinc-700 hover:border-zinc-500 hover:bg-zinc-900/50 active:bg-zinc-900/70"
+                  ? "border-primary bg-primary/20 scale-105"
+                  : "border-primary/30 hover:border-primary hover:bg-primary/10 active:bg-primary/15"
                 }
               `}
             >
               {/* Icon */}
               <div className={`
-                w-16 h-16 md:w-20 md:h-20 rounded-xl md:rounded-2xl flex items-center justify-center transition-all duration-300
+                w-16 h-16 md:w-20 md:h-20 rounded-xl md:rounded-2xl flex items-center justify-center transition-all duration-300 border-2
                 ${isDragging
-                  ? "bg-primary scale-110"
-                  : "bg-gradient-to-br from-zinc-800 to-zinc-900"
+                  ? "bg-primary border-primary scale-110"
+                  : "bg-white border-primary/40 group-hover:bg-primary group-hover:border-primary"
                 }
               `}>
                 {isDragging ? (
                   <Video className="w-8 h-8 md:w-10 md:h-10 text-white" />
                 ) : (
-                  <Upload className="w-8 h-8 md:w-10 md:h-10 text-zinc-400" />
+                  <Upload className="w-8 h-8 md:w-10 md:h-10 text-primary group-hover:text-white transition-colors" />
                 )}
               </div>
 
               {/* Text */}
               <div className="space-y-1 md:space-y-2">
-                <h1 className="text-lg md:text-xl font-semibold text-white">
+                <h1 className="text-lg md:text-xl font-bold text-foreground">
                   {isDragging ? "Drop your files" : "Tap to upload media"}
                 </h1>
-                <p className="text-sm text-zinc-500">
+                <p className="text-sm font-semibold text-primary">
                   or drag and drop
                 </p>
               </div>
+              
+              {/* File format hint at bottom */}
+              <p className="absolute bottom-6 md:bottom-8 text-[10px] md:text-xs text-muted-foreground font-medium">
+                MP4, MOV, WebM, M4A, MP3 supported
+              </p>
             </div>
 
             {/* Feature pills */}
-            <div className="flex flex-wrap items-center justify-center gap-1.5 md:gap-2 px-2">
+            <div className="flex flex-wrap items-center justify-center gap-2 md:gap-3 px-2">
               {[
                 "Auto-removes filler words",
                 "Removes stammering",
@@ -310,24 +347,16 @@ const UploadLanding = () => {
               ].map((feature) => (
                 <span
                   key={feature}
-                  className="px-2.5 md:px-3 py-1 md:py-1.5 rounded-full text-[11px] md:text-xs font-medium bg-zinc-800/50 text-zinc-400 border border-zinc-700/50"
+                  className="px-3 md:px-4 py-1.5 md:py-2 rounded-full text-xs md:text-sm font-semibold bg-card text-foreground border-2 border-border shadow-sm"
                 >
                   {feature}
                 </span>
               ))}
             </div>
-
-            {/* Hint */}
-            <p className="text-xs text-zinc-600">
-              MP4, MOV, WebM, M4A, MP3 supported
-            </p>
           </>
         )}
       </div>
 
-      {/* Decorative gradient orbs */}
-      <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-primary/5 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-primary/3 rounded-full blur-3xl pointer-events-none" />
     </div>
   );
 };

@@ -51,9 +51,9 @@ function formatTime(ms: number): string {
 }
 
 function buildSystemPrompt(context: EditorContext): string {
-  return `You are an expert AI video editor embedded in Expound, a professional transcript-first video editor for creating short-form content (Reels, TikTok, Shorts, YouTube videos).
+  return `You are an expert AI video editor embedded in Distill, a professional transcript-first video editor for creating short-form content (Reels, TikTok, Shorts, YouTube videos).
 
-## How Expound Works
+## How Distill Works
 - Users upload video clips that are automatically transcribed with word-level timing
 - The transcript IS the editing interface - deleting words from the text cuts them from the video
 - You control the entire editing workflow through natural language commands

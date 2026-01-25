@@ -65,7 +65,7 @@
 :root {
   --radius: 0.875rem;
 
-  /* === EXPOUND - Warm, Easy-on-Eyes Light Theme === */
+  /* === DISTILL - Warm, Easy-on-Eyes Light Theme === */
 
   /* Warm cream background - not harsh white */
   --background: #F8F7F4;
@@ -364,6 +364,15 @@
   /* Smooth transitions */
   .transition-smooth {
     transition: all 0.15s ease;
+  }
+
+  /* 3D Transform utilities */
+  .transform-3d {
+    transform-style: preserve-3d;
+  }
+
+  .perspective-1000 {
+    perspective: 1000px;
   }
 }
 

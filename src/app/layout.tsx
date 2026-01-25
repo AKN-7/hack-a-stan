@@ -7,7 +7,7 @@ import {
 } from "@/components/store-initializer";
 import { QueryProvider } from "@/components/query-provider";
 import { Analytics } from "@vercel/analytics/react";
-import { Outfit } from "next/font/google";
+import { Outfit, Sora } from "next/font/google";
 
 import "./globals.css";
 
@@ -28,10 +28,17 @@ const outfit = Outfit({
   weight: ["300", "400", "500", "600", "700"]
 });
 
+const sora = Sora({
+  variable: "--font-sora",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800"],
+  display: "swap",
+});
+
 export const metadata = createMetadata({
   title: {
-    template: "%s | Combo",
-    default: "Combo"
+    template: "%s | Distill",
+    default: "Distill"
   },
   description: "AI Video generator for the next gen web.",
   metadataBase: baseUrl
@@ -54,7 +61,7 @@ export default async function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistMono.variable} ${geist.variable} ${outfit.variable} antialiased dark font-sans bg-muted`}
+        className={`${geistMono.variable} ${geist.variable} ${outfit.variable} ${sora.variable} antialiased dark font-sans bg-muted`}
       >
         <QueryProvider>
           {children}
