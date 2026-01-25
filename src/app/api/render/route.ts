@@ -94,6 +94,7 @@ export async function POST(request: Request) {
       backgroundMusicClips,
       brollAssignments,
       audioSegments,
+      mixedModeBrollAssignments,
       clipTransitions,
     } = body;
 
@@ -113,6 +114,7 @@ export async function POST(request: Request) {
       backgroundMusicCount: backgroundMusicClips?.length || 0,
       brollCount: brollAssignments?.length || 0,
       audioSegmentCount: audioSegments?.length || 0,
+      mixedModeBrollCount: mixedModeBrollAssignments?.length || 0,
       clipTransitionCount: clipTransitions?.length || 0,
     });
 
@@ -166,6 +168,8 @@ export async function POST(request: Request) {
         // B-roll assignments for audio+broll mode
         brollAssignments: brollAssignments ?? [],
         audioSegments: audioSegments ?? [],
+        // Mixed mode B-roll assignments (audio_only clips in mixed timeline)
+        mixedModeBrollAssignments: mixedModeBrollAssignments ?? [],
         // Per-clip transitions
         clipTransitions: clipTransitions ?? [],
       },

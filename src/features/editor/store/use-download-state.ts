@@ -72,6 +72,57 @@ export const useDownloadState = create<DownloadState>((set, get) => ({
         const brollAssignments = isAudioBrollMode ? transcriptStore.getBrollAssignments() : [];
         const audioSegments = isAudioBrollMode ? transcriptStore.getAudioSegments() : [];
 
+        // Calculate mixed mode B-roll assignments (for audio_only clips in mixed timeline)
+        let mixedModeBrollAssignments: Array<{
+          clipId: string;
+          clipUrl: string;
+          startMs: number;
+          endMs: number;
+          durationMs: number;
+          timelineStartMs: number;
+          timelineEndMs: number;
+        }> = [];
+
+        const needsMixedModeBroll = !isAudioBrollMode && transcriptStore.hasAudioClipsNeedingBroll();
+        if (needsMixedModeBroll) {
+          const videoOnlyClips = transcriptStore.getVideoOnlyClips();
+          if (videoOnlyClips.length > 0) {
+            // Find audio_only segments from renderSegments
+            const audioOnlySegments = renderSegments.filter(seg => seg.clipType === "audio_only");
+
+            let brollIndex = 0;
+            const brollCount = videoOnlyClips.length;
+
+            // For each audio_only segment, assign B-roll (looping if needed)
+            for (const audioSeg of audioOnlySegments) {
+              let coveredDuration = 0;
+              const segmentDuration = audioSeg.durationMs;
+
+              // Fill this audio segment with B-roll (may need multiple B-roll clips)
+              while (coveredDuration < segmentDuration) {
+                const brollClip = videoOnlyClips[brollIndex % brollCount];
+                const brollDuration = brollClip.durationMs || 10000;
+                const remainingDuration = segmentDuration - coveredDuration;
+                const useDuration = Math.min(brollDuration, remainingDuration);
+
+                mixedModeBrollAssignments.push({
+                  clipId: brollClip.clipId,
+                  clipUrl: brollClip.url,
+                  startMs: 0,
+                  endMs: useDuration,
+                  durationMs: useDuration,
+                  timelineStartMs: audioSeg.offsetMs + coveredDuration,
+                  timelineEndMs: audioSeg.offsetMs + coveredDuration + useDuration,
+                });
+
+                coveredDuration += useDuration;
+                brollIndex++;
+              }
+            }
+            console.log(`[Export] Mixed B-roll: ${mixedModeBrollAssignments.length} assignments over ${audioOnlySegments.length} audio segments`);
+          }
+        }
+
         // Get per-clip transitions
         const clipTransitions = transcriptStore.getTransitionsForRender();
 
@@ -89,6 +140,7 @@ export const useDownloadState = create<DownloadState>((set, get) => ({
           backgroundMusicCount: backgroundMusicClips.length,
           brollCount: brollAssignments.length,
           audioSegmentCount: audioSegments.length,
+          mixedModeBrollCount: mixedModeBrollAssignments.length,
           clipTransitionCount: clipTransitions.length,
           transitionSettings,
           captionSettings,
@@ -125,6 +177,8 @@ export const useDownloadState = create<DownloadState>((set, get) => ({
             // Include B-roll assignments for audio+broll mode
             brollAssignments: brollAssignments.length > 0 ? brollAssignments : undefined,
             audioSegments: audioSegments.length > 0 ? audioSegments : undefined,
+            // Include mixed mode B-roll assignments (audio_only clips in mixed timeline)
+            mixedModeBrollAssignments: mixedModeBrollAssignments.length > 0 ? mixedModeBrollAssignments : undefined,
             // Include per-clip transitions
             clipTransitions: clipTransitions.length > 0 ? clipTransitions : undefined,
           })

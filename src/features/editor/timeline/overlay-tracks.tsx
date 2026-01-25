@@ -311,10 +311,10 @@ const OverlayTracks = ({ totalDurationMs }: OverlayTracksProps) => {
               clearTimelineSelection();
             }}
           >
-            {/* Track label */}
-            <div 
+            {/* Track label - hidden on mobile to match main track */}
+            <div
               className={cn(
-                "flex items-center gap-1.5 px-3 w-20 shrink-0 text-xs font-medium cursor-pointer hover:opacity-80 transition-opacity",
+                "hidden md:flex items-center gap-1.5 px-3 w-20 shrink-0 text-xs font-medium cursor-pointer hover:opacity-80 transition-opacity",
                 config.color
               )}
               onClick={handleLabelClick}

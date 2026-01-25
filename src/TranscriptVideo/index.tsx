@@ -146,6 +146,8 @@ export const transcriptVideoSchema = z.object({
   backgroundMusicClips: z.array(backgroundMusicSchema).optional(),
   brollAssignments: z.array(brollAssignmentSchema).optional(),
   audioSegments: z.array(audioSegmentSchema).optional(),
+  // Mixed mode B-roll (audio_only clips in mixed timeline)
+  mixedModeBrollAssignments: z.array(brollAssignmentSchema).optional(),
   clipTransitions: z.array(clipTransitionSchema).optional(),
 });
 
@@ -284,6 +286,7 @@ export const TranscriptVideo: React.FC<TranscriptVideoProps> = ({
   backgroundMusicClips = [],
   brollAssignments = [],
   audioSegments = [],
+  mixedModeBrollAssignments = [],
   clipTransitions = [],
 }) => {
   const { fps } = useVideoConfig();
@@ -571,6 +574,37 @@ export const TranscriptVideo: React.FC<TranscriptVideoProps> = ({
               endAt={audioEndFrame}
               volume={segment.volume ?? 1}
             />
+          </Sequence>
+        );
+      })}
+
+      {/* Mixed mode B-roll: renders B-roll video over audio_only segments in mixed timeline */}
+      {mixedModeBrollAssignments.length > 0 && mixedModeBrollAssignments.map((assignment, index) => {
+        const startFrame = Math.floor((assignment.timelineStartMs / 1000) * fps);
+        const brollDurationInFrames = Math.ceil((assignment.durationMs / 1000) * fps);
+        const videoStartFrame = Math.floor((assignment.startMs / 1000) * fps);
+        const videoEndFrame = Math.floor((assignment.endMs / 1000) * fps);
+
+        return (
+          <Sequence
+            key={`mixed-broll-${assignment.clipId}-${index}`}
+            from={startFrame}
+            durationInFrames={brollDurationInFrames}
+          >
+            <AbsoluteFill style={{ overflow: "hidden" }}>
+              <OffthreadVideo
+                src={assignment.clipUrl}
+                startFrom={videoStartFrame}
+                endAt={videoEndFrame}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  transform: "scale(1.05)",
+                }}
+                muted
+              />
+            </AbsoluteFill>
           </Sequence>
         );
       })}
