@@ -1410,19 +1410,21 @@ const useTranscriptStore = create<ITranscriptStore>()(
           set({ processingStatus: "Optimizing pacing..." });
           setGapThreshold(500); // Standard pacing
 
-          // Step 4: Enable smooth jump cuts via effects store
-          set({ processingStatus: "Enabling smooth cuts..." });
-          try {
-            const effectsStore = await getEffectsStore();
-            effectsStore.getState().setSegmentZoom({
-              enabled: true,
-              amount: 1.05, // 5% zoom
-              pattern: "alternate",
-            });
-            console.log(`[Auto-Magic] Enabled smooth jump cuts`);
-          } catch (e) {
-            console.warn("[Auto-Magic] Could not enable smooth cuts:", e);
-          }
+          // Step 4: Smooth jump cuts - DISABLED by default
+          // The alternating zoom was causing "shakiness" perception
+          // Users can enable this manually via the AI chat if desired
+          // set({ processingStatus: "Enabling smooth cuts..." });
+          // try {
+          //   const effectsStore = await getEffectsStore();
+          //   effectsStore.getState().setSegmentZoom({
+          //     enabled: true,
+          //     amount: 1.05, // 5% zoom
+          //     pattern: "alternate",
+          //   });
+          //   console.log(`[Auto-Magic] Enabled smooth jump cuts`);
+          // } catch (e) {
+          //   console.warn("[Auto-Magic] Could not enable smooth cuts:", e);
+          // }
 
           // Step 5: Apply AI-suggested clip order (if provided)
           if (aiSuggestedOrder && aiSuggestedOrder.length > 0) {

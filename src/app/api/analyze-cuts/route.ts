@@ -37,30 +37,40 @@ export async function POST(request: NextRequest) {
 
     const systemPrompt = `You are an expert video editor creating ONE polished video from multiple raw clips.
 
-CRITICAL: These clips are likely MULTIPLE TAKES of similar content. Your job is to:
-1. Keep ONLY the best take of each piece of content
-2. Remove ENTIRE clips that are worse versions of content in other clips
-3. Fix any stammering/repetition within clips
-4. Order clips for optimal narrative flow
+PHILOSOPHY: Every clip has value. Your job is to SALVAGE and STITCH content intelligently, not just delete. Deleting a clip should be the LAST resort when it truly adds nothing.
 
-ANALYSIS RULES:
+CRITICAL ANALYSIS APPROACH:
+1. NEVER delete a clip just because another clip covers similar ground - instead, find what's UNIQUE in each clip
+2. Look for complementary content: different examples, different phrasings, additional details
+3. Stitch together the BEST PARTS from multiple takes - don't just pick one and discard the rest
+4. Use wordCuts surgically to extract good segments and remove bad ones within each clip
 
-**INTRO DETECTION**: Clips with "Hi", "Hey", "Hello", "I'm [name]" are intros → put FIRST
+WHAT TO SALVAGE (use wordCuts to extract these from "bad" clips):
+- Unique examples or stories not in other clips
+- Better explanations of specific points
+- Stronger emotional moments or emphasis
+- Good one-liners or quotable moments
+- Additional context that enriches the narrative
 
-**DUPLICATE TAKES**: If multiple clips say essentially the same thing (e.g., introducing themselves or their job):
-- Keep the SINGLE BEST version
-- Mark ALL other versions' clips for REMOVAL in clipsToRemove
+WHEN TO ACTUALLY REMOVE A CLIP (clipsToRemove):
+- The clip is 100% duplicate with nothing unique (identical words, same delivery)
+- The clip is completely unusable (all filler, all stammering, makes no sense)
+- The clip contradicts other clips and is clearly the wrong version
 
-**STAMMERING/REPETITION**: "I built the tool I built the tool" → cut the FIRST occurrence's word IDs
+ORDERING STRATEGY:
+- **Intro** (greeting/name) → FIRST
+- **Hook/Strongest Point** → Consider moving the most compelling moment near the start
+- **Body content** → Logical flow, building on previous points
+- **Examples/Stories** → Weave in throughout for engagement
+- **Outro** (thanks/goodbye) → LAST
 
-**ORDERING**:
-- Intro (greeting/name) → FIRST
-- Body content → MIDDLE
-- Outro (thanks/goodbye) → LAST
+WORD CUTS (be surgical):
+- Stammering: "I built the tool I built the tool" → cut the FIRST occurrence
+- False starts: "So basically, what I mean is, so basically" → keep only the final clean version
+- Filler gaps: Long "umm" or pauses → cut them
+- Repetitive transitions: Multiple "so" or "basically" in a row
 
-BE AGGRESSIVE - creators want tight, professional edits. When in doubt, CUT IT.
-
-**TEXT HOOK**: Generate a compelling text hook for the first 4 seconds of the video.
+**TEXT HOOK**: Generate a compelling text hook for the first 4 seconds:
 - Find the MOST attention-grabbing statement (numbers, achievements, bold claims)
 - Make it SHORT (5-10 words max)
 - Make it scroll-stopping (would make someone stop scrolling on TikTok/Instagram)
@@ -68,8 +78,8 @@ BE AGGRESSIVE - creators want tight, professional edits. When in doubt, CUT IT.
 
 Return JSON:
 {
-  "suggestedOrder": ["clipId1", "clipId2"],  // Order of clips to KEEP (exclude removed clips)
-  "clipsToRemove": ["clipId3", "clipId4"],   // Clips to DELETE entirely (duplicate takes)
+  "suggestedOrder": ["clipId1", "clipId2"],  // Order of ALL clips to KEEP (try to keep most clips!)
+  "clipsToRemove": ["clipId3"],   // ONLY clips that are truly 100% unusable - be conservative here
   "wordCuts": [
     {
       "clipId": "...",
@@ -79,7 +89,7 @@ Return JSON:
     }
   ],
   "textHook": "The compelling hook text for the first 4 seconds",
-  "reasoning": "Brief explanation"
+  "reasoning": "Brief explanation of how you salvaged content from each clip"
 }`;
 
     const userPrompt = `Analyze these ${clips.length} clips to create ONE polished video.
@@ -90,9 +100,15 @@ ${transcriptContext}
 WORD IDS (use these exact IDs in wordCuts):
 ${wordsContext}
 
-IMPORTANT:
-- Clips 1-5 might all be takes of the SAME intro content - keep only ONE best take
-- If you see "I built X I built X" - that's stammering, cut the first occurrence
+SMART EDITING APPROACH:
+- DON'T just delete clips because they overlap - find what's UNIQUE in each one
+- Multiple intro takes? Pick the best ONE for intro, but check if others have unique content worth keeping later
+- Use wordCuts to surgically extract good segments from "weaker" clips
+- STITCH content: Clip 2 might have a better example, Clip 3 might have better energy on one sentence
+- Only put a clip in clipsToRemove if it's truly 100% duplicate with zero unique value
+
+TECHNICAL NOTES:
+- If you see "I built X I built X" - that's stammering, cut the first occurrence using wordCuts
 - Greeting/intro clips ("Hi, I'm...") should be FIRST in suggestedOrder
 - Use the actual clipId values (like "${clips[0]?.clipId}") not "clipId1"
 - Use actual word IDs from above for wordCuts
