@@ -79,6 +79,15 @@ WORD CUTS (be surgical):
 - Make it scroll-stopping (would make someone stop scrolling on TikTok/Instagram)
 - Examples: "How I helped creators make $300M", "The tool that changed everything", "From zero to $1M in 6 months"
 
+**EMPHASIS MOMENTS** (for zoom effects):
+Identify 2-4 key moments where a slow zoom would add impact:
+- Numbers/statistics ("300 million", "10x growth")
+- Bold claims or statements
+- Emotional peaks
+- Key revelations or "aha" moments
+- Call-to-actions
+For each, provide the word IDs that mark the START of the emphasis moment.
+
 Return JSON:
 {
   "suggestedOrder": ["clipId1", "clipId2"],  // Order of ALL clips to KEEP
@@ -95,6 +104,14 @@ Return JSON:
       "wordIds": ["id1", "id2", "id3"],  // MUST include actual word IDs from the input
       "reason": "Stammering - repeated phrase",
       "text": "I built the tool"
+    }
+  ],
+  "emphasisPoints": [
+    {
+      "clipId": "...",
+      "wordId": "id1",  // The word where zoom should START
+      "reason": "Key statistic - high impact moment",
+      "text": "300 million dollars"
     }
   ],
   "textHook": "The compelling hook text for the first 4 seconds",
@@ -152,6 +169,7 @@ Return ONLY valid JSON.`;
       suggestedOrder: [] as string[],
       clipsToRemove: [] as Array<{ clipId: string; clipIndex: number; reason: string }>,
       wordCuts: [] as Array<{ clipId: string; wordIds: string[]; reason: string; text: string }>,
+      emphasisPoints: [] as Array<{ clipId: string; wordId: string; reason: string; text: string }>,
       textHook: "" as string,
       reasoning: "",
     };
@@ -183,6 +201,7 @@ Return ONLY valid JSON.`;
           suggestedOrder: parsed.suggestedOrder || [],
           clipsToRemove,
           wordCuts: parsed.wordCuts || [],
+          emphasisPoints: parsed.emphasisPoints || [],
           textHook: parsed.textHook || "",
           reasoning: parsed.reasoning || "",
         };
@@ -200,6 +219,7 @@ Return ONLY valid JSON.`;
       clipsToRemove: result.clipsToRemove,
       wordCutsCount: result.wordCuts.length,
       totalWordsToDelete: allWordIds.length,
+      emphasisPointsCount: result.emphasisPoints.length,
       textHook: result.textHook,
     });
 

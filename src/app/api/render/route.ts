@@ -87,6 +87,9 @@ export async function POST(request: Request) {
       design,
       options,
       transitionSettings,
+      captionSettings,
+      emphasisPoints,
+      textHook,
     } = body;
 
     // Extract text overlays from design
@@ -141,6 +144,12 @@ export async function POST(request: Request) {
         design,
         // Transition settings for cross-dissolve smoothing
         transitionSettings: transitionSettings ?? { enabled: false, type: "fade", durationMs: 150 },
+        // Caption settings for animated captions
+        captionSettings: captionSettings ?? { style: "animated", animationType: "pop", windowSize: 4 },
+        // AI-detected emphasis points for zoom effects
+        emphasisPoints: emphasisPoints ?? [],
+        // Text hook for rendering
+        textHook: textHook || undefined,
       },
       // Override duration if using transcript segments
       ...(durationInFrames ? { durationInFrames } : {}),

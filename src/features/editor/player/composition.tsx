@@ -11,6 +11,8 @@ import { AbsoluteFill, Sequence, Video, useCurrentFrame, prefetch } from "remoti
 import useStore from "../store/use-store";
 import useTranscriptStore from "../store/use-transcript-store";
 import useEffectsStore from "../store/use-effects-store";
+import { AnimatedCaptions } from "@/TranscriptVideo/AnimatedCaptions";
+import { EmphasisZoom } from "@/TranscriptVideo/EmphasisZoom";
 
 const Composition = () => {
   const [editableTextId, setEditableTextId] = useState<string | null>(null);
@@ -31,6 +33,9 @@ const Composition = () => {
   const clipOrder = useTranscriptStore((state) => state.clipOrder);
   const getRenderSegments = useTranscriptStore((state) => state.getRenderSegments);
   const getCaptionsForRender = useTranscriptStore((state) => state.getCaptionsForRender);
+  const emphasisPointsRaw = useTranscriptStore((state) => state.emphasisPoints);
+  const getEmphasisPointsForRender = useTranscriptStore((state) => state.getEmphasisPointsForRender);
+  const textHook = useTranscriptStore((state) => state.textHook);
 
   // Get transcript-based render segments (now reactive to clips changes)
   const renderSegments = useMemo(() => getRenderSegments(), [clips, clipOrder, getRenderSegments]);
@@ -43,29 +48,15 @@ const Composition = () => {
     return Math.round((transitions.durationMs / 1000) * fps);
   }, [transitions.enabled, transitions.type, transitions.durationMs, fps]);
 
-  // Get captions (3 words at a time)
+  // Get caption settings
+  const captionSettings = useEffectsStore((state) => state.captions);
+
+  // Get word-level captions for animated display
   const captions = useMemo(() => getCaptionsForRender(), [clips, clipOrder, getCaptionsForRender]);
 
-  // Calculate current time in the edited (transcript-driven) timeline
-  const currentTimeMs = (frame / fps) * 1000;
-
-  // Find current caption based on time - use stable reference to avoid recalc every frame
-  // Binary search would be better for large caption arrays, but this is O(n) with early exit
-  const currentCaption = useMemo(() => {
-    // Only recalculate when captions array changes, not every frame
-    // Return a function that can be called with currentTimeMs
-    return captions;
-  }, [captions]);
-
-  // Lookup current caption without causing re-render on every frame
-  const activeCaption = (() => {
-    for (const caption of currentCaption) {
-      if (currentTimeMs >= caption.startMs && currentTimeMs < caption.endMs) {
-        return caption;
-      }
-    }
-    return null;
-  })();
+  // Get emphasis points for zoom effects (AI-detected important moments)
+  const emphasisPoints = useMemo(() => getEmphasisPointsForRender(), [emphasisPointsRaw, clips, clipOrder, getEmphasisPointsForRender]);
+  const hasEmphasisPoints = emphasisPoints.length > 0;
 
   // Memoize groupTrackItems to avoid O(n²) calculation every frame
   const groupedItems = useMemo(() => groupTrackItems({
@@ -281,58 +272,17 @@ const Composition = () => {
     [renderSegments, fps]
   );
 
-  return (
-    <>
-      {/* Transcript-driven video rendering with optional cross-dissolve transitions */}
-      {hasTranscriptData && (
-        <AbsoluteFill style={{ backgroundColor: "#000" }}>
-          {transitionFrames > 0 && segmentFrames.length > 1 ? (
-            // Use TransitionSeries for smooth cross-dissolve between segments
-            <VideoTransitionSeries>
-              {segmentFrames.flatMap(({ segment, durationInFrames, videoStartFrame, videoEndFrame }, index) => {
-                const elements: React.ReactNode[] = [
-                  <VideoTransitionSeries.Sequence
-                    key={`seq-${segment.clipId}-${index}`}
-                    durationInFrames={durationInFrames}
-                  >
-                    <AbsoluteFill style={{ overflow: "hidden" }}>
-                      <Video
-                        src={segment.clipUrl}
-                        startFrom={videoStartFrame}
-                        endAt={videoEndFrame}
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                          transform: "scale(1.05)",
-                        }}
-                      />
-                    </AbsoluteFill>
-                  </VideoTransitionSeries.Sequence>
-                ];
-
-                // Add transition after each segment except the last
-                if (index < segmentFrames.length - 1) {
-                  elements.push(
-                    <VideoTransitionSeries.Transition
-                      key={`trans-${index}`}
-                      presentation={fade()}
-                      timing={linearTiming({ durationInFrames: transitionFrames })}
-                    />
-                  );
-                }
-
-                return elements;
-              })}
-            </VideoTransitionSeries>
-          ) : (
-            // Standard rendering without transitions
-            segmentFrames.map(({ segment, startFrame, durationInFrames, videoStartFrame, videoEndFrame }, index) => (
-              <Sequence
-                key={`transcript-${segment.clipId}-${index}`}
-                from={startFrame}
+  // Video content that may be wrapped with EmphasisZoom
+  const videoContent = hasTranscriptData ? (
+    <AbsoluteFill style={{ backgroundColor: "#000" }}>
+      {transitionFrames > 0 && segmentFrames.length > 1 ? (
+        // Use TransitionSeries for smooth cross-dissolve between segments
+        <VideoTransitionSeries>
+          {segmentFrames.flatMap(({ segment, durationInFrames, videoStartFrame, videoEndFrame }, index) => {
+            const elements: React.ReactNode[] = [
+              <VideoTransitionSeries.Sequence
+                key={`seq-${segment.clipId}-${index}`}
                 durationInFrames={durationInFrames}
-                premountFor={fps}
               >
                 <AbsoluteFill style={{ overflow: "hidden" }}>
                   <Video
@@ -347,10 +297,62 @@ const Composition = () => {
                     }}
                   />
                 </AbsoluteFill>
-              </Sequence>
-            ))
-          )}
-        </AbsoluteFill>
+              </VideoTransitionSeries.Sequence>
+            ];
+
+            // Add transition after each segment except the last
+            if (index < segmentFrames.length - 1) {
+              elements.push(
+                <VideoTransitionSeries.Transition
+                  key={`trans-${index}`}
+                  presentation={fade()}
+                  timing={linearTiming({ durationInFrames: transitionFrames })}
+                />
+              );
+            }
+
+            return elements;
+          })}
+        </VideoTransitionSeries>
+      ) : (
+        // Standard rendering without transitions
+        segmentFrames.map(({ segment, startFrame, durationInFrames, videoStartFrame, videoEndFrame }, index) => (
+          <Sequence
+            key={`transcript-${segment.clipId}-${index}`}
+            from={startFrame}
+            durationInFrames={durationInFrames}
+            premountFor={fps}
+          >
+            <AbsoluteFill style={{ overflow: "hidden" }}>
+              <Video
+                src={segment.clipUrl}
+                startFrom={videoStartFrame}
+                endAt={videoEndFrame}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  transform: "scale(1.05)",
+                }}
+              />
+            </AbsoluteFill>
+          </Sequence>
+        ))
+      )}
+    </AbsoluteFill>
+  ) : null;
+
+  return (
+    <>
+      {/* Transcript-driven video rendering with optional emphasis zoom */}
+      {hasTranscriptData && (
+        hasEmphasisPoints ? (
+          <EmphasisZoom emphasisPoints={emphasisPoints}>
+            {videoContent}
+          </EmphasisZoom>
+        ) : (
+          videoContent
+        )
       )}
 
       {/* Non-video timeline items (text, captions, audio, images/B-roll, etc.) */}
@@ -447,31 +449,53 @@ const Composition = () => {
         );
       })}
 
-      {/* Current caption overlay - 3 words at a time */}
-      {activeCaption && (
-        <div
-          style={{
-            position: "absolute",
-            bottom: "5%",
-            left: 0,
-            right: 0,
-            textAlign: "center",
-            pointerEvents: "none",
-            zIndex: 9999,
-          }}
-        >
-          <span
-            style={{
-              color: "#FFFFFF",
-              fontSize: 72,
-              fontWeight: 900,
-              textTransform: "uppercase",
-              textShadow: "-2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000",
-            }}
-          >
-            {activeCaption.text}
-          </span>
-        </div>
+      {/* Animated word-by-word captions with current word highlighting */}
+      {captions.length > 0 && captionSettings.style !== "none" && (
+        <AnimatedCaptions
+          words={captions}
+          windowSize={captionSettings.windowSize}
+          style={captionSettings.animationType}
+        />
+      )}
+
+      {/* Text hook rendered directly (bypasses DesignCombo animation system) */}
+      {textHook && (
+        <Sequence from={0} durationInFrames={Math.ceil((4000 / 1000) * fps)}>
+          <AbsoluteFill style={{ pointerEvents: "none", zIndex: 10 }}>
+            <div
+              style={{
+                position: "absolute",
+                top: size.height * 0.05,
+                left: "50%",
+                transform: "translateX(-50%)",
+                width: size.width * 0.7,
+                backgroundColor: "#ffffff",
+                borderRadius: 16,
+                paddingTop: 32,
+                paddingBottom: 32,
+                paddingLeft: 24,
+                paddingRight: 24,
+                boxShadow: "0px 4px 12px rgba(0,0,0,0.12)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <span
+                style={{
+                  fontFamily: "Arial, Helvetica, sans-serif",
+                  fontSize: 64,
+                  fontWeight: 900,
+                  color: "#000000",
+                  textAlign: "center",
+                  lineHeight: 1.2,
+                }}
+              >
+                {textHook}
+              </span>
+            </div>
+          </AbsoluteFill>
+        </Sequence>
       )}
     </>
   );

@@ -167,8 +167,9 @@ const UploadLanding = () => {
               </p>
             </div>
 
-            {/* Video thumbnails grid with progress */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 w-full max-w-xl">
+            {/* Video thumbnails grid with progress - scrollable container */}
+            <div className="w-full max-w-xl max-h-[40vh] overflow-y-auto rounded-xl">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 p-1">
               {uploadsWithThumbnails.map((upload) => (
                 <div
                   key={upload.id}
@@ -220,6 +221,7 @@ const UploadLanding = () => {
                   </div>
                 </div>
               ))}
+              </div>
             </div>
 
             {/* Overall progress */}

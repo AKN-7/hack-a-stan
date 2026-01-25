@@ -8,6 +8,9 @@ const Player = () => {
   const playerRef = useRef<PlayerRef>(null);
   const { setPlayerRef, setState, duration, fps, size, background } = useStore();
 
+  // Magic processing state for overlay
+  const isProcessing = useTranscriptStore((state) => state.isProcessing);
+
   // Subscribe to actual state to trigger re-renders when transcription completes
   const clips = useTranscriptStore((state) => state.clips);
   const clipOrder = useTranscriptStore((state) => state.clipOrder);
@@ -49,16 +52,41 @@ const Player = () => {
   }, [clips, clipOrder, getTotalDurationMs, getRenderSegments, setState]);
 
   return (
-    <RemotionPlayer
-      ref={playerRef}
-      component={Composition}
-      durationInFrames={durationInFrames}
-      compositionWidth={size.width}
-      compositionHeight={size.height}
-      className={`h-full w-full bg-[${background.value}]`}
-      fps={30}
-      overflowVisible
-    />
+    <div className="relative h-full w-full">
+      <RemotionPlayer
+        ref={playerRef}
+        component={Composition}
+        durationInFrames={durationInFrames}
+        compositionWidth={size.width}
+        compositionHeight={size.height}
+        className={`h-full w-full bg-[${background.value}]`}
+        fps={30}
+        overflowVisible
+      />
+
+      {/* Magic processing overlay */}
+      {isProcessing && (
+        <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-50 overflow-hidden">
+          {/* Scan line animation */}
+          <div
+            className="absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-primary to-transparent opacity-60"
+            style={{
+              animation: "scan 2s ease-in-out infinite",
+            }}
+          />
+          <style>{`
+            @keyframes scan {
+              0%, 100% { top: 0%; }
+              50% { top: 100%; }
+            }
+          `}</style>
+
+          <span className="text-4xl font-bold text-white tracking-wide">
+            magic in progress
+          </span>
+        </div>
+      )}
+    </div>
   );
 };
 export default Player;

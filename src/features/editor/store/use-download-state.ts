@@ -61,10 +61,13 @@ export const useDownloadState = create<DownloadState>((set, get) => ({
         const renderSegments = transcriptStore.getRenderSegments();
         const totalDurationMs = transcriptStore.getTotalDurationMs();
         const captions = transcriptStore.getCaptionsForRender();
+        const emphasisPoints = transcriptStore.getEmphasisPointsForRender();
+        const textHook = transcriptStore.textHook;
 
-        // Get transition settings for cross-dissolve smoothing
+        // Get transition and caption settings
         const effectsStore = useEffectsStore.getState();
         const transitionSettings = effectsStore.transitions;
+        const captionSettings = effectsStore.captions;
 
         // Step 1: POST request to start rendering
         const response = await fetch(`/api/render`, {
@@ -86,6 +89,12 @@ export const useDownloadState = create<DownloadState>((set, get) => ({
             captions: captions.length > 0 ? captions : undefined,
             // Include transition settings for cross-dissolve smoothing
             transitionSettings,
+            // Include caption settings for animated captions
+            captionSettings,
+            // Include AI-detected emphasis points for zoom effects
+            emphasisPoints: emphasisPoints.length > 0 ? emphasisPoints : undefined,
+            // Include text hook for rendering
+            textHook: textHook || undefined,
           })
         });
 

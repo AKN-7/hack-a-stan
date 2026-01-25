@@ -13,6 +13,12 @@ export interface TransitionSettings {
   durationMs: number; // Duration of transition in milliseconds
 }
 
+export interface CaptionSettings {
+  style: "animated" | "static" | "none";
+  animationType: "pop" | "slide" | "fade";
+  windowSize: number; // Number of words to show at once
+}
+
 interface IEffectsStore {
   // Segment zoom settings (for jump-cut smoothing)
   segmentZoom: SegmentZoomSettings;
@@ -20,9 +26,13 @@ interface IEffectsStore {
   // Transition settings between segments
   transitions: TransitionSettings;
 
+  // Caption settings
+  captions: CaptionSettings;
+
   // Actions
   setSegmentZoom: (settings: Partial<SegmentZoomSettings>) => void;
   setTransitions: (settings: Partial<TransitionSettings>) => void;
+  setCaptions: (settings: Partial<CaptionSettings>) => void;
   enableSmoothCuts: (zoomAmount?: number) => void;
   disableSmoothCuts: () => void;
   reset: () => void;
@@ -40,11 +50,18 @@ const DEFAULT_TRANSITIONS: TransitionSettings = {
   durationMs: 200,
 };
 
+const DEFAULT_CAPTIONS: CaptionSettings = {
+  style: "animated",
+  animationType: "pop",
+  windowSize: 4,
+};
+
 const useEffectsStore = create<IEffectsStore>()(
   persist(
     (set) => ({
       segmentZoom: DEFAULT_ZOOM,
       transitions: DEFAULT_TRANSITIONS,
+      captions: DEFAULT_CAPTIONS,
 
       setSegmentZoom: (settings) =>
         set((state) => ({
@@ -54,6 +71,11 @@ const useEffectsStore = create<IEffectsStore>()(
       setTransitions: (settings) =>
         set((state) => ({
           transitions: { ...state.transitions, ...settings },
+        })),
+
+      setCaptions: (settings) =>
+        set((state) => ({
+          captions: { ...state.captions, ...settings },
         })),
 
       enableSmoothCuts: (zoomAmount = 1.05) =>
@@ -77,6 +99,7 @@ const useEffectsStore = create<IEffectsStore>()(
         set({
           segmentZoom: DEFAULT_ZOOM,
           transitions: DEFAULT_TRANSITIONS,
+          captions: DEFAULT_CAPTIONS,
         }),
     }),
     {
@@ -84,6 +107,7 @@ const useEffectsStore = create<IEffectsStore>()(
       partialize: (state) => ({
         segmentZoom: state.segmentZoom,
         transitions: state.transitions,
+        captions: state.captions,
       }),
     }
   )

@@ -76,6 +76,15 @@ interface HistorySnapshot {
   gapThresholdMs: number;
 }
 
+// Emphasis point for zoom effect
+export interface EmphasisPoint {
+  clipId: string;
+  wordId: string;
+  startMs: number;  // Word start time (within clip)
+  reason: string;
+  text: string;
+}
+
 // Magic processing result for display in chat
 export interface MagicProcessingResult {
   fillerCount: number;
@@ -87,6 +96,7 @@ export interface MagicProcessingResult {
   suggestedOrder?: string[];
   reasoning?: string;
   wordCuts?: Array<{ clipId: string; text: string; reason: string }>;
+  emphasisPoints?: EmphasisPoint[];  // AI-detected moments for zoom effect
   completedAt: number; // timestamp
 }
 
@@ -109,6 +119,13 @@ interface ITranscriptStore {
   _hasRunMagicProcessing: boolean; // Prevents running twice
   magicProcessingResult: MagicProcessingResult | null; // Latest result for chat display
   clearMagicProcessingResult: () => void;
+
+  // AI-detected emphasis points for zoom effects
+  emphasisPoints: EmphasisPoint[];
+  getEmphasisPointsForRender: () => Array<{ startMs: number; endMs: number; reason: string }>;
+
+  // Text hook for display (rendered directly, not through DesignCombo)
+  textHook: string | null;
 
   // Auto-process when all clips are transcribed
   _checkAndAutoProcess: () => void;
@@ -211,7 +228,60 @@ const useTranscriptStore = create<ITranscriptStore>()(
       _hasRunMagicProcessing: false,
       magicProcessingResult: null,
       clearMagicProcessingResult: () => set({ magicProcessingResult: null }),
-      resetMagicProcessing: () => set({ _hasRunMagicProcessing: false, magicProcessingResult: null }),
+      resetMagicProcessing: () => set({ _hasRunMagicProcessing: false, magicProcessingResult: null, emphasisPoints: [], textHook: null }),
+
+      // AI-detected emphasis points for zoom effects
+      emphasisPoints: [],
+
+      // Text hook for display (rendered directly in composition)
+      textHook: null,
+      getEmphasisPointsForRender: () => {
+        const { emphasisPoints, clips } = get();
+        const renderSegments = get().getRenderSegments();
+
+        // Map emphasis points to output timeline positions
+        const mappedPoints: Array<{ startMs: number; endMs: number; reason: string }> = [];
+
+        for (const point of emphasisPoints) {
+          const clip = clips[point.clipId];
+          if (!clip) continue;
+
+          // Find the word in the clip to get its timing
+          const word = clip.words.find(w => w.id === point.wordId);
+          if (!word) continue;
+
+          // Find which render segment contains this word
+          for (const segment of renderSegments) {
+            if (segment.clipId !== point.clipId) continue;
+            if (word.startMs >= segment.startMs && word.startMs < segment.endMs) {
+              // Map to output timeline
+              const outputStart = segment.offsetMs + (word.startMs - segment.startMs);
+              const outputEnd = segment.offsetMs + (word.endMs - segment.startMs);
+
+              // Zoom effect duration: start 200ms before word, end 500ms after
+              mappedPoints.push({
+                startMs: Math.max(0, outputStart - 200),
+                endMs: outputEnd + 500,
+                reason: point.reason,
+              });
+              break;
+            }
+          }
+        }
+
+        // Apply cooldown - minimum 3 seconds between zoom effects
+        const cooldownMs = 3000;
+        const filteredPoints: Array<{ startMs: number; endMs: number; reason: string }> = [];
+
+        for (const point of mappedPoints) {
+          const lastPoint = filteredPoints[filteredPoints.length - 1];
+          if (!lastPoint || point.startMs >= lastPoint.endMs + cooldownMs) {
+            filteredPoints.push(point);
+          }
+        }
+
+        return filteredPoints;
+      },
 
       // History state
       _history: [],
@@ -462,6 +532,22 @@ const useTranscriptStore = create<ITranscriptStore>()(
           }
         }
 
+        // Minimum segment duration to avoid micro-cuts (professional technique)
+        const minSegmentMs = 600; // At least 600ms per segment
+
+        // Extend short segments by padding their boundaries
+        for (const segment of keepSegments) {
+          if (segment.durationMs < minSegmentMs) {
+            const deficit = minSegmentMs - segment.durationMs;
+            const padEach = deficit / 2;
+
+            // Extend start earlier and end later (within reason)
+            segment.startMs = Math.max(0, segment.startMs - padEach);
+            segment.endMs = segment.endMs + padEach;
+            segment.durationMs = segment.endMs - segment.startMs;
+          }
+        }
+
         return keepSegments;
       },
 
@@ -685,11 +771,11 @@ const useTranscriptStore = create<ITranscriptStore>()(
           },
         }));
 
-        // Show success notification
-        const clipIndex = get().clipOrder.indexOf(clipId) + 1;
-        const durationMs = words.length > 0 ? words[words.length - 1].endMs - words[0].startMs : 0;
-        const durationSec = Math.round(durationMs / 1000);
-        toast.success(`Clip ${clipIndex} ready!`);
+        // Show/update progress notification (single toast that updates)
+        const { clips: updatedClips, clipOrder } = get();
+        const readyCount = clipOrder.filter(id => updatedClips[id]?.status === "ready").length;
+        const totalCount = clipOrder.length;
+        toast.success(`${readyCount}/${totalCount} clips ready`, { id: "transcription-progress" });
 
         // Check if we should auto-process (waits for ALL clips to be ready)
         // This replaces the manual filler word suggestion with automatic processing
@@ -1366,46 +1452,33 @@ const useTranscriptStore = create<ITranscriptStore>()(
                 aiReasoning = result.reasoning || "AI-optimized narrative flow";
               }
 
-              // Step 2d: Add text hook overlay if AI generated one
-              if (result.textHook && result.textHook.length > 0) {
-                aiTextHook = result.textHook; // Capture for result
-                set({ processingStatus: "Adding attention-grabbing text hook..." });
-                try {
-                  const editorStore = await getEditorStore();
-                  const { size } = editorStore.getState();
-                  const hookId = nanoid();
-
-                  // Text hook appears in the first 4 seconds
-                  const hookDurationMs = 4000;
-
-                  const hookPayload = {
-                    id: hookId,
-                    type: "text",
-                    display: { from: 0, to: hookDurationMs },
-                    details: {
-                      text: result.textHook,
-                      fontSize: 64,
-                      fontFamily: "Inter-Bold",
-                      color: "#ffffff",
-                      backgroundColor: "transparent",
-                      textAlign: "center",
-                      width: size.width * 0.9,
-                      height: 200,
-                      top: size.height * 0.08,
-                      left: (size.width - size.width * 0.9) / 2,
-                      wordWrap: "break-word",
-                      borderWidth: 0,
-                      borderColor: "#000000",
-                      boxShadow: { color: "#000000", x: 3, y: 3, blur: 12 },
-                      textTransform: "uppercase",
-                    },
+              // Step 2d: Store emphasis points for zoom effects
+              if (result.emphasisPoints && result.emphasisPoints.length > 0) {
+                set({ processingStatus: `Found ${result.emphasisPoints.length} emphasis moments for zoom effects...` });
+                const emphasisPointsMapped: EmphasisPoint[] = result.emphasisPoints.map((ep: any) => {
+                  // Find the word to get its startMs
+                  const clip = clips[ep.clipId];
+                  const word = clip?.words.find((w: TranscriptWord) => w.id === ep.wordId);
+                  return {
+                    clipId: ep.clipId,
+                    wordId: ep.wordId,
+                    startMs: word?.startMs || 0,
+                    reason: ep.reason,
+                    text: ep.text,
                   };
+                });
+                set({ emphasisPoints: emphasisPointsMapped });
+                console.log(`[Auto-Magic] Found ${emphasisPointsMapped.length} emphasis points for zoom effects`);
+                emphasisPointsMapped.forEach((ep: EmphasisPoint) => {
+                  console.log(`  - "${ep.text}" at ${ep.startMs}ms (${ep.reason})`);
+                });
+              }
 
-                  dispatch(ADD_TEXT, { payload: hookPayload, options: {} });
-                  console.log(`[Auto-Magic] Added text hook: "${result.textHook}"`);
-                } catch (hookError) {
-                  console.warn("[Auto-Magic] Could not add text hook:", hookError);
-                }
+              // Step 2e: Store text hook for direct rendering (bypasses DesignCombo animation system)
+              if (result.textHook && result.textHook.length > 0) {
+                aiTextHook = result.textHook;
+                set({ processingStatus: "Adding attention-grabbing text hook...", textHook: result.textHook });
+                console.log(`[Auto-Magic] Set text hook: "${result.textHook}"`);
               }
             }
           } catch (aiError) {
@@ -1416,21 +1489,9 @@ const useTranscriptStore = create<ITranscriptStore>()(
           set({ processingStatus: "Optimizing pacing..." });
           setGapThreshold(200); // Balanced - gaps >200ms get cut
 
-          // Step 4: Smooth jump cuts - DISABLED by default
-          // The alternating zoom was causing "shakiness" perception
-          // Users can enable this manually via the AI chat if desired
-          // set({ processingStatus: "Enabling smooth cuts..." });
-          // try {
-          //   const effectsStore = await getEffectsStore();
-          //   effectsStore.getState().setSegmentZoom({
-          //     enabled: true,
-          //     amount: 1.05, // 5% zoom
-          //     pattern: "alternate",
-          //   });
-          //   console.log(`[Auto-Magic] Enabled smooth jump cuts`);
-          // } catch (e) {
-          //   console.warn("[Auto-Magic] Could not enable smooth cuts:", e);
-          // }
+          // Step 4: Transitions disabled - natural cuts with gap merging work better
+          // The minimum segment duration (600ms) and gap threshold (200ms)
+          // already create smooth, professional-feeling cuts without visible fades
 
           // Step 5: Apply AI-suggested clip order (if provided)
           if (aiSuggestedOrder && aiSuggestedOrder.length > 0) {
@@ -1475,6 +1536,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
           console.log(`[Auto-Magic] Complete! Clips removed: ${clipsRemoved}, Words cut: ${totalWordsCut}, Time saved: ${timeSavedSec}s`);
 
           // Store the full result for chat display
+          const currentEmphasisPoints = get().emphasisPoints;
           const processingResult: MagicProcessingResult = {
             fillerCount,
             aiCutsCount,
@@ -1485,6 +1547,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
             suggestedOrder: aiSuggestedOrder || undefined,
             reasoning: aiReasoning || undefined,
             wordCuts: wordCuts.length > 0 ? wordCuts : undefined,
+            emphasisPoints: currentEmphasisPoints.length > 0 ? currentEmphasisPoints : undefined,
             completedAt: Date.now(),
           };
 
