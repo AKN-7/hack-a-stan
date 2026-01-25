@@ -2,24 +2,27 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { useDropzone } from "react-dropzone";
-import { Upload, Video, Music, Check } from "lucide-react";
+import { Upload, Video, Music, Check, X, Plus } from "lucide-react";
 import useUploadStore from "./store/use-upload-store";
 import { ThreeDMarquee } from "@/components/ui/3d-marquee";
+import { Button } from "@/components/ui/button";
 
 interface UploadWithThumbnail {
   id: string;
   file: File;
   thumbnail: string | null;
   progress: number;
-  status: "pending" | "uploading" | "uploaded" | "failed";
+  status: "staged" | "pending" | "uploading" | "uploaded" | "failed";
 }
 
 const UploadLanding = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadsWithThumbnails, setUploadsWithThumbnails] = useState<UploadWithThumbnail[]>([]);
+  const [isStaging, setIsStaging] = useState(false); // Files selected but not yet uploading
   const { addPendingUploads, processUploads, activeUploads, pendingUploads } = useUploadStore();
 
-  const isUploading = activeUploads.length > 0 || pendingUploads.length > 0 || uploadsWithThumbnails.length > 0;
+  const isUploading = activeUploads.length > 0 || pendingUploads.length > 0;
+  const hasFiles = uploadsWithThumbnails.length > 0;
 
   // Sync progress from upload store to our thumbnail state
   useEffect(() => {
@@ -107,26 +110,25 @@ const UploadLanding = () => {
       return;
     }
 
-    // Create upload entries with IDs
+    // Create upload entries with IDs - staged, not uploading yet
     const uploadEntries: UploadWithThumbnail[] = mediaFiles.map(file => ({
       id: crypto.randomUUID(),
       file,
       thumbnail: null,
       progress: 0,
-      status: "pending" as const,
+      status: "staged" as const,
     }));
 
-    // Set initial state immediately
-    setUploadsWithThumbnails(uploadEntries);
+    // Add to existing staged files (allow adding more)
+    setUploadsWithThumbnails(prev => [...prev, ...uploadEntries]);
+    setIsStaging(true);
 
     // Generate thumbnails in parallel (only for video files)
     const thumbnailPromises = uploadEntries.map(async (entry) => {
-      // Only generate thumbnails for video files
       if (entry.file.type.startsWith("video/")) {
         const thumbnail = await generateThumbnail(entry.file);
         return { id: entry.id, thumbnail };
       }
-      // Audio files get no thumbnail (will show music icon)
       return { id: entry.id, thumbnail: null };
     });
 
@@ -137,9 +139,31 @@ const UploadLanding = () => {
         prev.map(u => u.id === id ? { ...u, thumbnail } : u)
       );
     });
+  }, []);
+
+  // Remove a staged file
+  const removeFile = useCallback((id: string) => {
+    setUploadsWithThumbnails(prev => {
+      const updated = prev.filter(u => u.id !== id);
+      if (updated.length === 0) {
+        setIsStaging(false);
+      }
+      return updated;
+    });
+  }, []);
+
+  // Start uploading all staged files
+  const startUpload = useCallback(() => {
+    if (uploadsWithThumbnails.length === 0) return;
+
+    // Mark all as pending
+    setUploadsWithThumbnails(prev =>
+      prev.map(u => ({ ...u, status: "pending" as const }))
+    );
+    setIsStaging(false);
 
     // Add to upload store and process
-    const uploads = uploadEntries.map(entry => ({
+    const uploads = uploadsWithThumbnails.map(entry => ({
       id: entry.id,
       file: entry.file,
       type: entry.file.type,
@@ -148,7 +172,7 @@ const UploadLanding = () => {
 
     addPendingUploads(uploads);
     processUploads();
-  }, [addPendingUploads, processUploads]);
+  }, [uploadsWithThumbnails, addPendingUploads, processUploads]);
 
   const { getRootProps, getInputProps, open } = useDropzone({
     onDrop,
@@ -212,25 +236,31 @@ const UploadLanding = () => {
           </span>
         </div>
 
-        {isUploading && uploadsWithThumbnails.length > 0 ? (
-          // Upload progress with thumbnails
+        {hasFiles ? (
+          // Staging or Upload progress with thumbnails
           <div className="flex flex-col items-center gap-6 w-full">
             <div className="space-y-2">
               <h1 className="text-2xl font-bold text-primary">
-                Uploading {uploadsWithThumbnails.length} file{uploadsWithThumbnails.length > 1 ? "s" : ""}
+                {isStaging
+                  ? `${uploadsWithThumbnails.length} file${uploadsWithThumbnails.length > 1 ? "s" : ""} selected`
+                  : `Uploading ${uploadsWithThumbnails.length} file${uploadsWithThumbnails.length > 1 ? "s" : ""}`
+                }
               </h1>
               <p className="font-semibold text-foreground">
-                Your media will be transcribed automatically
+                {isStaging
+                  ? "Review your clips, then hit Go"
+                  : "Your media will be transcribed automatically"
+                }
               </p>
             </div>
 
-            {/* Video thumbnails grid with progress - scrollable container */}
+            {/* Video thumbnails grid - scrollable container */}
             <div className="w-full max-w-xl max-h-[50vh] overflow-y-auto rounded-xl">
               <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 p-1">
               {uploadsWithThumbnails.map((upload) => (
                 <div
                   key={upload.id}
-                  className="relative aspect-[9/16] rounded-lg overflow-hidden bg-white border-2 border-border"
+                  className="relative aspect-[9/16] rounded-lg overflow-hidden bg-white border-2 border-border group"
                 >
                   {/* Thumbnail */}
                   {upload.thumbnail ? (
@@ -249,13 +279,22 @@ const UploadLanding = () => {
                     </div>
                   )}
 
-                  {/* Progress overlay */}
-                  {upload.status !== "uploaded" && (
+                  {/* Staged - show remove button on hover */}
+                  {upload.status === "staged" && (
+                    <button
+                      onClick={() => removeFile(upload.id)}
+                      className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/70 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500"
+                    >
+                      <X className="w-4 h-4 text-white" />
+                    </button>
+                  )}
+
+                  {/* Progress overlay - only when actually uploading */}
+                  {(upload.status === "pending" || upload.status === "uploading") && (
                     <div className="absolute inset-0 bg-white/95 flex flex-col items-center justify-center gap-2">
                       <span className="text-primary text-sm font-bold">
                         {upload.progress}%
                       </span>
-                      {/* Progress bar */}
                       <div className="w-3/4 h-2 bg-border rounded-full overflow-hidden border border-border">
                         <div
                           className="h-full bg-primary rounded-full transition-all duration-300"
@@ -282,13 +321,46 @@ const UploadLanding = () => {
                   </div>
                 </div>
               ))}
+
+              {/* Add more button when staging */}
+              {isStaging && (
+                <button
+                  onClick={open}
+                  className="aspect-[9/16] rounded-lg border-2 border-dashed border-primary/30 hover:border-primary hover:bg-primary/5 flex flex-col items-center justify-center gap-2 transition-colors"
+                >
+                  <Plus className="w-6 h-6 text-primary/50" />
+                  <span className="text-xs text-primary/50 font-medium">Add more</span>
+                </button>
+              )}
               </div>
             </div>
 
-            {/* Overall progress */}
-            <div className="text-sm font-semibold text-foreground">
-              {uploadsWithThumbnails.filter(u => u.status === "uploaded").length} of {uploadsWithThumbnails.length} uploaded
-            </div>
+            {/* Action buttons */}
+            {isStaging ? (
+              <div className="flex items-center gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setUploadsWithThumbnails([]);
+                    setIsStaging(false);
+                  }}
+                  className="px-6"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={startUpload}
+                  className="px-8 text-lg font-bold"
+                  size="lg"
+                >
+                  Go
+                </Button>
+              </div>
+            ) : (
+              <div className="text-sm font-semibold text-foreground">
+                {uploadsWithThumbnails.filter(u => u.status === "uploaded").length} of {uploadsWithThumbnails.length} uploaded
+              </div>
+            )}
           </div>
         ) : (
           // Upload state

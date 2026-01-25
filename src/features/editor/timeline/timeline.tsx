@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import Header from "./header";
 import TranscriptClipsTrack from "./transcript-clips-track";
 import MusicTrack from "./music-track";
@@ -9,12 +10,51 @@ const Timeline = () => {
   // Check if we have transcript clips
   const clipOrder = useTranscriptStore((s) => s.clipOrder);
   const clips = useTranscriptStore((s) => s.clips);
+  const getRenderSegments = useTranscriptStore((s) => s.getRenderSegments);
   const hasTranscriptClips = clipOrder.length > 0 && clipOrder.some(
     (id) => clips[id] !== undefined
   );
 
+  // UNIFIED DURATION: Single source of truth for all tracks
+  // This ensures overlay tracks and transcript clips track use the same time base
+  const totalDurationMs = useMemo(() => {
+    const clipDurations = new Map<string, number>();
+    const renderSegments = getRenderSegments();
+
+    // Build duration map from render segments (for ready clips)
+    for (const segment of renderSegments) {
+      const current = clipDurations.get(segment.clipId) || 0;
+      clipDurations.set(segment.clipId, current + segment.durationMs);
+    }
+
+    // Sum up all clip durations (including placeholder for transcribing clips)
+    let total = 0;
+    for (const clipId of clipOrder) {
+      const clip = clips[clipId];
+      if (!clip) continue;
+
+      // Ready clips: use calculated duration from render segments
+      // Transcribing/pending clips: use 5000ms placeholder
+      const durationMs = clip.status === "ready"
+        ? (clipDurations.get(clipId) || 0)
+        : 5000;
+
+      if (clip.status === "ready" && durationMs <= 0) continue;
+      total += durationMs;
+    }
+
+    return total;
+  }, [clipOrder, clips, getRenderSegments]);
+
+  // Dot grid pattern for timeline editor aesthetic
+  const dotGridStyle = {
+    backgroundColor: '#e5e5e5',
+    backgroundImage: `radial-gradient(circle, #c4c4c4 1px, transparent 1px)`,
+    backgroundSize: '12px 12px',
+  };
+
   return (
-    <div data-timeline className="bg-gradient-to-b from-muted to-background h-full w-full flex flex-col border-t border-border">
+    <div data-timeline className="h-full w-full flex flex-col border-t border-border" style={dotGridStyle}>
       {/* Play controls + time */}
       <Header />
 
@@ -23,7 +63,7 @@ const Timeline = () => {
         {hasTranscriptClips ? (
           <>
             {/* Overlay tracks (B-roll, text, etc.) - auto-expand when items exist */}
-            <OverlayTracks />
+            <OverlayTracks totalDurationMs={totalDurationMs} />
 
             {/* Main video track with integrated playhead */}
             <div className="flex items-center flex-1 min-h-[50px] md:min-h-[60px] mb-2 md:mb-4">
@@ -35,12 +75,12 @@ const Timeline = () => {
 
               {/* Track content - full width on mobile */}
               <div className="flex-1 h-full py-1 px-2 md:px-0">
-                <TranscriptClipsTrack />
+                <TranscriptClipsTrack totalDurationMs={totalDurationMs} />
               </div>
             </div>
 
             {/* Music track - shows background music clips */}
-            <MusicTrack />
+            <MusicTrack totalDurationMs={totalDurationMs} />
           </>
         ) : (
           <div className="h-full flex items-center justify-center px-4">

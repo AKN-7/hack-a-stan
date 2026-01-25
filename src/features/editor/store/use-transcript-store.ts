@@ -1822,7 +1822,17 @@ const useTranscriptStore = create<ITranscriptStore>()(
                 };
               });
 
-            console.log("[Auto-Magic] Starting 3-pass analysis for", clipData.length, "clips");
+            console.log("\n" + "=".repeat(80));
+            console.log("[AUTO-MAGIC] STARTING 3-PASS ANALYSIS");
+            console.log("=".repeat(80));
+            console.log(`Total clips: ${clipData.length}`);
+            clipData.forEach((clip, i) => {
+              console.log(`\nClip ${i + 1} (${clip.clipId}):`);
+              console.log(`  Type: ${clip.clipType}`);
+              console.log(`  Words: ${clip.words.length}`);
+              console.log(`  Text: "${clip.text.substring(0, 150)}${clip.text.length > 150 ? '...' : ''}"`);
+            });
+            console.log("=".repeat(80) + "\n");
             addProcessingEvent("pass_start", "AI analyzing your content...", `${clipData.length} clips to process`);
 
             // ==================== PASS 1: Understand + Dedupe ====================
@@ -1932,6 +1942,21 @@ const useTranscriptStore = create<ITranscriptStore>()(
             // Apply word cuts from Pass 3
             if (pass3Result.wordIdsToDelete && pass3Result.wordIdsToDelete.length > 0) {
               set({ processingStatus: `Cutting ${pass3Result.wordIdsToDelete.length} words...` });
+
+              // Log exactly which words are being deleted
+              console.log("\n[AUTO-MAGIC] APPLYING WORD CUTS:");
+              const currentClips = get().clips;
+              pass3Result.wordIdsToDelete.forEach((wordId: string) => {
+                // Find which clip and word this is
+                for (const clipId of Object.keys(currentClips)) {
+                  const word = currentClips[clipId].words.find(w => w.id === wordId);
+                  if (word) {
+                    console.log(`  Deleting: "${word.text}" (${wordId}) from ${clipId}`);
+                    break;
+                  }
+                }
+              });
+
               deleteWords(pass3Result.wordIdsToDelete);
               aiCutsCount = pass3Result.wordIdsToDelete.length;
               if (pass3Result.wordCuts) {

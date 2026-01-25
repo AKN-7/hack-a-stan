@@ -3,16 +3,20 @@ import { Music, X, Volume2, GripVertical } from "lucide-react";
 import useTranscriptStore from "../store/use-transcript-store";
 import { cn } from "@/lib/utils";
 
-const MusicTrack = () => {
+interface MusicTrackProps {
+  totalDurationMs: number; // Unified duration from parent Timeline
+}
+
+const MusicTrack = ({ totalDurationMs }: MusicTrackProps) => {
   const clips = useTranscriptStore((s) => s.clips);
   const getBackgroundMusicClips = useTranscriptStore((s) => s.getBackgroundMusicClips);
-  const getTotalDurationMs = useTranscriptStore((s) => s.getTotalDurationMs);
   const removeClip = useTranscriptStore((s) => s.removeClip);
   const setClipVolume = useTranscriptStore((s) => s.setClipVolume);
   const trimClip = useTranscriptStore((s) => s.trimClip);
 
   const musicClips = useMemo(() => getBackgroundMusicClips(), [clips]);
-  const totalDurationMs = useMemo(() => getTotalDurationMs(), [clips]);
+  // NOTE: totalDurationMs is now passed from parent Timeline as a prop
+  // This ensures all tracks (overlay, transcript, music) use the same time base
 
   // Trim drag state
   const [dragging, setDragging] = useState<{

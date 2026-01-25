@@ -22,6 +22,16 @@ interface ClipTranscript {
 // ============================================================================
 
 async function runPass1(clips: ClipTranscript[]) {
+  console.log("\n" + "=".repeat(80));
+  console.log("[PASS 1 - UNDERSTAND + DEDUPE] INPUT");
+  console.log("=".repeat(80));
+  console.log(`Clips received: ${clips.length}`);
+  clips.forEach((clip, i) => {
+    console.log(`\n--- Clip ${i + 1} (${clip.clipId}) ---`);
+    console.log(`Words: ${clip.words.length}`);
+    console.log(`Text: "${clip.text.substring(0, 200)}${clip.text.length > 200 ? '...' : ''}"`);
+  });
+
   const transcriptContext = clips.map(clip =>
     `=== CLIP ${clip.clipIndex} (ID: ${clip.clipId}) ===\n${clip.text}`
   ).join("\n\n");
@@ -82,7 +92,11 @@ Return ONLY valid JSON.`;
     .map(block => block.text)
     .join("");
 
-  console.log("[Pass 1 - Understand+Dedupe] Raw response:", responseText.substring(0, 500));
+  console.log("\n" + "-".repeat(80));
+  console.log("[PASS 1] FULL RAW RESPONSE:");
+  console.log("-".repeat(80));
+  console.log(responseText);
+  console.log("-".repeat(80));
 
   // Parse response
   let result = {
@@ -119,11 +133,14 @@ Return ONLY valid JSON.`;
     result.uniqueClipIds = clips.map(c => c.clipId).filter(id => !removedIds.has(id));
   }
 
-  console.log("[Pass 1] Result:", {
-    understanding: result.understanding.substring(0, 100),
-    clipsToRemove: result.clipsToRemove.length,
-    uniqueClipIds: result.uniqueClipIds.length,
+  console.log("\n[PASS 1] PARSED RESULT:");
+  console.log(`Understanding: "${result.understanding}"`);
+  console.log(`Clips to remove (${result.clipsToRemove.length}):`);
+  result.clipsToRemove.forEach(c => {
+    console.log(`  - ${c.clipId}: ${c.reason}`);
   });
+  console.log(`Unique clips to keep (${result.uniqueClipIds.length}): ${result.uniqueClipIds.join(", ")}`);
+  console.log("=".repeat(80) + "\n");
 
   return result;
 }
@@ -133,6 +150,15 @@ Return ONLY valid JSON.`;
 // ============================================================================
 
 async function runPass2(clips: ClipTranscript[], understanding: string) {
+  console.log("\n" + "=".repeat(80));
+  console.log("[PASS 2 - ORDER] INPUT");
+  console.log("=".repeat(80));
+  console.log(`Understanding from Pass 1: "${understanding}"`);
+  console.log(`Clips to order: ${clips.length}`);
+  clips.forEach((clip, i) => {
+    console.log(`  ${i + 1}. ${clip.clipId} - "${clip.text.substring(0, 100)}..."`);
+  });
+
   const transcriptContext = clips.map(clip =>
     `=== CLIP ${clip.clipIndex} (ID: ${clip.clipId}) ===\n${clip.text}`
   ).join("\n\n");
@@ -182,7 +208,11 @@ Return ONLY valid JSON.`;
     .map(block => block.text)
     .join("");
 
-  console.log("[Pass 2 - Order] Raw response:", responseText.substring(0, 500));
+  console.log("\n" + "-".repeat(80));
+  console.log("[PASS 2] FULL RAW RESPONSE:");
+  console.log("-".repeat(80));
+  console.log(responseText);
+  console.log("-".repeat(80));
 
   let result = {
     suggestedOrder: [] as string[],
@@ -211,10 +241,10 @@ Return ONLY valid JSON.`;
     result.suggestedOrder = [...result.suggestedOrder, ...missingClips];
   }
 
-  console.log("[Pass 2] Result:", {
-    suggestedOrder: result.suggestedOrder,
-    orderReasoning: result.orderReasoning.substring(0, 100),
-  });
+  console.log("\n[PASS 2] PARSED RESULT:");
+  console.log(`Suggested order: ${result.suggestedOrder.join(" -> ")}`);
+  console.log(`Reasoning: "${result.orderReasoning}"`);
+  console.log("=".repeat(80) + "\n");
 
   return result;
 }
@@ -224,43 +254,66 @@ Return ONLY valid JSON.`;
 // ============================================================================
 
 async function runPass3(clips: ClipTranscript[]) {
-  // Build the full ordered script
-  const fullScript = clips.map(clip =>
-    `=== CLIP ${clip.clipIndex} (ID: ${clip.clipId}) ===\n${clip.text}`
+  console.log("\n" + "=".repeat(80));
+  console.log("[PASS 3 - REFINE + HOOKS] INPUT");
+  console.log("=".repeat(80));
+  console.log(`Clips to refine: ${clips.length}`);
+  clips.forEach((clip, i) => {
+    console.log(`\n--- Clip ${i + 1} (${clip.clipId}) ---`);
+    console.log(`Text: "${clip.text}"`);
+    console.log(`Words (${clip.words.length}):`);
+    console.log(clip.words.map(w => `  "${w.text}" [${w.id}]`).join("\n"));
+  });
+
+  // Build the full ordered script - USE NEW ORDER INDEX (i+1), not original clipIndex
+  const fullScript = clips.map((clip, i) =>
+    `=== CLIP ${i + 1} (ID: ${clip.clipId}) ===\n${clip.text}`
   ).join("\n\n");
 
-  // Build word context for surgical cuts
-  const wordsContext = clips.map(clip => {
-    if (clip.words.length <= 50) {
-      return `CLIP ${clip.clipIndex} WORDS:\n${clip.words.map(w => `"${w.text}" [${w.id}]`).join(" ")}`;
-    }
-    const first5 = clip.words.slice(0, 5).map(w => `"${w.text}" [${w.id}]`).join(" ");
-    const last5 = clip.words.slice(-5).map(w => `"${w.text}" [${w.id}]`).join(" ");
-    return `CLIP ${clip.clipIndex} (${clip.words.length} words): ${first5} ... ${last5}`;
+  // Build word context for surgical cuts - USE NEW ORDER INDEX
+  const wordsContext = clips.map((clip, i) => {
+    return `CLIP ${i + 1} (${clip.clipId}) - ALL ${clip.words.length} WORDS:\n${clip.words.map(w => `"${w.text}" [${w.id}]`).join(" ")}`;
   }).join("\n\n");
+
+  console.log("\n[PASS 3] WORDS CONTEXT BEING SENT:");
+  console.log(wordsContext);
 
   const systemPrompt = `You are doing a final polish on a video script.
 
-The clips are already in optimal order with duplicates removed. Your job is to:
+The clips are already in optimal order with duplicates removed. Your job is to make CONSERVATIVE cuts that improve the script WITHOUT breaking grammar.
 
-1. **REFINE**: Read the full script as one piece. Find remaining repetition or phrases that could be tightened. Look for:
-   - Same idea mentioned in two different clips
-   - Stuttering or false starts ("I, I, I think" → cut first two "I"s)
-   - Filler phrases that add nothing
-   - Repeated transitions ("so, so, so")
+## WORD CUTS - BE VERY CONSERVATIVE
 
-2. **TEXT HOOK**: Find THE most attention-grabbing line from this content.
-   - Should be 5-10 words max
-   - Scroll-stopping (would make someone stop on TikTok/Instagram)
-   - Usually a bold claim, impressive number, or intriguing statement
+ONLY cut these specific patterns:
+- **Stuttering**: Repeated words in immediate sequence ("I I I think" → keep only last "I")
+- **Repeated filler in sequence**: ("so so so" → keep one "so")
+- **Obvious filler words**: "um", "uh", "like" when used as filler (not "like" meaning similar)
+- **Broken/garbled speech**: Words that are clearly transcription errors or nonsensical
 
-3. **EMPHASIS POINTS**: Identify 2-4 moments that deserve emphasis (for zoom effects):
-   - Numbers/statistics
-   - Bold claims or statements
-   - Emotional peaks
-   - Key revelations
+DO NOT cut:
+- Transition phrases ("And not only", "But also", "So anyway") - these connect ideas
+- Words that would break grammar if removed
+- "Just", "really", "actually" unless repeated in immediate sequence
+- Anything where removing it would make the sentence sound unnatural
 
-Be intelligent about word cuts. Don't just pattern match - understand what makes the script tighter and punchier.`;
+## CRITICAL: VERIFY EACH CUT
+Before including a cut, mentally read the sentence WITHOUT those words.
+If it sounds broken, ungrammatical, or unnatural → DO NOT INCLUDE THAT CUT.
+
+Example of BAD cut:
+- Original: "And not only this watermelon crazy"
+- Cutting "And not only" → "this watermelon crazy" ← BROKEN GRAMMAR, don't cut
+
+Example of GOOD cut:
+- Original: "This this is crazy"
+- Cutting first "This" → "This is crazy" ← STILL GRAMMATICAL, good cut
+
+## TEXT HOOK
+Find THE most attention-grabbing line (5-10 words max).
+Should be scroll-stopping for TikTok/Instagram.
+
+## EMPHASIS POINTS
+Identify 2-4 moments for zoom effects: numbers, bold claims, emotional peaks.`;
 
   const userPrompt = `Here's the ordered script to refine:
 
@@ -270,9 +323,12 @@ WORD IDS (use these for surgical cuts):
 ${wordsContext}
 
 Tasks:
-1. Find word-level cuts to tighten the script
+1. Find ONLY stuttering/repeated words to cut (be very conservative!)
 2. Find the BEST hook line (5-10 words, scroll-stopping)
 3. Find 2-4 emphasis moments for zoom effects
+
+IMPORTANT: For each potential cut, verify the resulting sentence is still grammatical.
+Only include cuts where the words are IMMEDIATELY REPEATED (stuttering) or clearly broken speech.
 
 Return JSON:
 {
@@ -280,8 +336,9 @@ Return JSON:
     {
       "clipId": "...",
       "wordIds": ["word-id-1", "word-id-2"],
-      "reason": "Why these words should be cut",
-      "text": "The words being cut"
+      "reason": "Why these words should be cut (must be stuttering or broken speech)",
+      "text": "The words being cut",
+      "resultingSentence": "What the sentence looks like AFTER the cut (to verify grammar)"
     }
   ],
   "textHook": "The most attention-grabbing line (5-10 words)",
@@ -311,7 +368,11 @@ Return ONLY valid JSON.`;
     .map(block => block.text)
     .join("");
 
-  console.log("[Pass 3 - Refine+Hooks] Raw response:", responseText.substring(0, 500));
+  console.log("\n" + "-".repeat(80));
+  console.log("[PASS 3] FULL RAW RESPONSE:");
+  console.log("-".repeat(80));
+  console.log(responseText);
+  console.log("-".repeat(80));
 
   let result = {
     wordCuts: [] as Array<{ clipId: string; wordIds: string[]; reason: string; text: string }>,
@@ -336,12 +397,25 @@ Return ONLY valid JSON.`;
   // Flatten word IDs
   const wordIdsToDelete = result.wordCuts.flatMap(cut => cut.wordIds || []);
 
-  console.log("[Pass 3] Result:", {
-    wordCutsCount: result.wordCuts.length,
-    wordIdsToDelete: wordIdsToDelete.length,
-    textHook: result.textHook,
-    emphasisPointsCount: result.emphasisPoints.length,
+  console.log("\n[PASS 3] PARSED RESULT:");
+  console.log(`Text Hook: "${result.textHook}"`);
+  console.log(`\nWord Cuts (${result.wordCuts.length}):`);
+  result.wordCuts.forEach((cut: any, i: number) => {
+    console.log(`  ${i + 1}. Clip: ${cut.clipId}`);
+    console.log(`     Cutting: "${cut.text}"`);
+    console.log(`     Word IDs: ${cut.wordIds?.join(", ")}`);
+    console.log(`     Reason: ${cut.reason}`);
+    if (cut.resultingSentence) {
+      console.log(`     Result: "${cut.resultingSentence}"`);
+    }
   });
+  console.log(`\nTotal word IDs to delete: ${wordIdsToDelete.length}`);
+  console.log(`Word IDs: ${wordIdsToDelete.join(", ")}`);
+  console.log(`\nEmphasis Points (${result.emphasisPoints.length}):`);
+  result.emphasisPoints.forEach((ep, i) => {
+    console.log(`  ${i + 1}. "${ep.text}" - ${ep.reason}`);
+  });
+  console.log("=".repeat(80) + "\n");
 
   return {
     ...result,
@@ -362,7 +436,16 @@ export async function POST(request: NextRequest) {
       understanding?: string;
     };
 
+    console.log("\n" + "#".repeat(80));
+    console.log(`[ANALYZE-CUTS API] INCOMING REQUEST - Pass ${pass || "legacy"}`);
+    console.log("#".repeat(80));
+    console.log(`Clips: ${clips?.length || 0}`);
+    if (understanding) {
+      console.log(`Understanding context: "${understanding.substring(0, 100)}..."`);
+    }
+
     if (!clips || clips.length === 0) {
+      console.log("No clips provided, returning empty response");
       return Response.json({ actions: [], message: "No clips to analyze" });
     }
 

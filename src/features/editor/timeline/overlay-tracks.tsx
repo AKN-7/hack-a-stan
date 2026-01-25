@@ -1,7 +1,6 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from "react";
 import { Image, Type, Music, Shapes, Film } from "lucide-react";
 import useStore from "../store/use-store";
-import useTranscriptStore from "../store/use-transcript-store";
 import { useCurrentPlayerFrame } from "../hooks/use-current-frame";
 import { cn } from "@/lib/utils";
 import { ITrackItem } from "@designcombo/types";
@@ -27,9 +26,12 @@ interface GroupedTracks {
 
 type DragMode = "move" | "trim-left" | "trim-right" | null;
 
-const OverlayTracks = () => {
+interface OverlayTracksProps {
+  totalDurationMs: number; // Unified duration from parent Timeline
+}
+
+const OverlayTracks = ({ totalDurationMs }: OverlayTracksProps) => {
   const { trackItemsMap, trackItemIds, fps, playerRef, setState, selectedTimelineItemId, setTimelineSelection, clearTimelineSelection } = useStore();
-  const getTotalDurationMs = useTranscriptStore((s) => s.getTotalDurationMs);
   const currentFrame = useCurrentPlayerFrame(playerRef);
 
   // Drag state
@@ -51,15 +53,8 @@ const OverlayTracks = () => {
     setStateRef.current = setState;
   }, [trackItemsMap, setState]);
 
-  // Get total duration from transcript
-  const totalDurationMs = useMemo(() => {
-    const duration = getTotalDurationMs();
-    // Log warning if duration is 0 - overlay items won't render
-    if (duration <= 0 && Object.keys(trackItemsMap).length > 0) {
-      console.warn("[OverlayTracks] totalDurationMs is 0 or negative, overlay items will not render on timeline");
-    }
-    return duration;
-  }, [getTotalDurationMs, trackItemsMap]);
+  // NOTE: totalDurationMs is now passed from parent Timeline as a prop
+  // This ensures all tracks (overlay, transcript, music) use the same time base
 
   // Group items by type (excluding main video - that's handled by transcript track)
   const groupedTracks = useMemo((): GroupedTracks => {
@@ -210,16 +205,22 @@ const OverlayTracks = () => {
       }
 
       // Also dispatch to DesignCombo state manager for persistence
-      dispatch(EDIT_OBJECT, {
-        payload: {
-          [dragItemId]: {
-            display: {
-              from: roundedFrom,
-              to: roundedTo,
+      // Wrap in try-catch as DesignCombo can throw if state isn't ready
+      try {
+        dispatch(EDIT_OBJECT, {
+          payload: {
+            [dragItemId]: {
+              display: {
+                from: roundedFrom,
+                to: roundedTo,
+              },
             },
           },
-        },
-      });
+        });
+      } catch (e) {
+        // Silently ignore - Zustand update above is already applied
+        console.warn("[OverlayTracks] Failed to dispatch to DesignCombo:", e);
+      }
     };
 
     const handleMouseUp = () => {
@@ -258,8 +259,8 @@ const OverlayTracks = () => {
     playerRef.current.seekTo(targetFrame);
   }, [playerRef, totalDurationMs, fps, dragItemId, clearTimelineSelection]);
 
-  // Don't render if no overlay items
-  if (sortedTypes.length === 0) {
+  // Don't render if no overlay items or no duration (avoids division by zero)
+  if (sortedTypes.length === 0 || totalDurationMs <= 0) {
     return null;
   }
 

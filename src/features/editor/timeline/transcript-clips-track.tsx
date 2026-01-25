@@ -40,7 +40,11 @@ interface ClipBlock {
 
 type TrimSide = "left" | "right" | null;
 
-const TranscriptClipsTrack = () => {
+interface TranscriptClipsTrackProps {
+  totalDurationMs: number; // Unified duration from parent Timeline
+}
+
+const TranscriptClipsTrack = ({ totalDurationMs }: TranscriptClipsTrackProps) => {
   const { clips, clipOrder, reorderClips, trimClip } = useTranscriptStore();
   const getRenderSegments = useTranscriptStore(s => s.getRenderSegments);
   const { fps, playerRef, selectedTimelineItemId, setTimelineSelection, clearTimelineSelection } = useStore();
@@ -117,10 +121,8 @@ const TranscriptClipsTrack = () => {
     return blocks;
   }, [clipOrder, clips, getRenderSegments, getFullClipDuration]);
 
-  // Compute total duration from clip blocks (already reactive)
-  const totalDurationMs = useMemo(() => {
-    return clipBlocks.reduce((sum, block) => sum + block.durationMs, 0);
-  }, [clipBlocks]);
+  // NOTE: totalDurationMs is now passed from parent Timeline as a prop
+  // This ensures all tracks (overlay, transcript, music) use the same time base
 
   // Playhead position
   const currentTimeMs = (currentFrame / fps) * 1000;
