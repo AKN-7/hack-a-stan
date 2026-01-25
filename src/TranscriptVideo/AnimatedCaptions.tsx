@@ -27,6 +27,9 @@ interface AnimatedCaptionsProps {
   /** Color scheme */
   activeColor?: string;
   inactiveColor?: string;
+  /** Typography */
+  fontSize?: number;
+  fontFamily?: string;
   /** Emphasis points for combo effects (extra pop on key moments) */
   emphasisPoints?: EmphasisPoint[];
 }
@@ -41,6 +44,8 @@ export const AnimatedCaptions: React.FC<AnimatedCaptionsProps> = ({
   style = "pop",
   activeColor = "#FFFF00",  // Yellow for active word
   inactiveColor = "#FFFFFF", // White for other words
+  fontSize = 68,
+  fontFamily = "Arial, Helvetica, sans-serif",
   emphasisPoints = [],
 }) => {
   const frame = useCurrentFrame();
@@ -119,6 +124,8 @@ export const AnimatedCaptions: React.FC<AnimatedCaptionsProps> = ({
               animationStyle={style}
               activeColor={activeColor}
               inactiveColor={inactiveColor}
+              fontSize={fontSize}
+              fontFamily={fontFamily}
               hasAppeared={hasAppeared}
               isEmphasis={isEmphasis && isCurrent}
             />
@@ -137,6 +144,8 @@ interface AnimatedWordProps {
   animationStyle: "pop" | "slide" | "fade";
   activeColor: string;
   inactiveColor: string;
+  fontSize: number;
+  fontFamily: string;
   hasAppeared: boolean;
   isEmphasis?: boolean; // Extra pop for emphasis moments (combo effect)
 }
@@ -149,6 +158,8 @@ const AnimatedWord: React.FC<AnimatedWordProps> = ({
   animationStyle,
   activeColor,
   inactiveColor,
+  fontSize,
+  fontFamily,
   hasAppeared,
   isEmphasis = false,
 }) => {
@@ -225,8 +236,8 @@ const AnimatedWord: React.FC<AnimatedWordProps> = ({
     <span
       style={{
         display: "inline-block",
-        fontFamily: "Arial, Helvetica, sans-serif",
-        fontSize: 68,
+        fontFamily,
+        fontSize,
         fontWeight: 900,
         color: textColor,
         textTransform: "uppercase",

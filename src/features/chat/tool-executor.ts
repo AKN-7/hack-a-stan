@@ -4,7 +4,7 @@ import useEffectsStore from "@/features/editor/store/use-effects-store";
 import { dispatch } from "@designcombo/events";
 import { ADD_TEXT, ADD_IMAGE, ADD_VIDEO, ADD_AUDIO, EDIT_OBJECT, LAYER_DELETE } from "@designcombo/state";
 import { nanoid } from "nanoid";
-import { STYLE_CAPTION_PRESETS, applyPreset, groupCaptionItems } from "@/features/editor/control-item/floating-controls/caption-preset-picker";
+import { STYLE_CAPTION_PRESETS } from "@/features/editor/control-item/floating-controls/caption-preset-picker";
 import { toast } from "sonner";
 
 export interface ToolResult {
@@ -38,22 +38,39 @@ const FILLER_WORDS = [
 ];
 
 // Caption preset mapping - maps friendly names to preset indices
+// NOTE: These must match the actual colors in STYLE_CAPTION_PRESETS
 const CAPTION_PRESET_MAP: Record<string, number> = {
-  "tiktok-neon": 0,
-  "tiktok-bold": 1,
-  "minimal-clean": 2,
-  "typewriter-retro": 3,
-  "cinematic-white": 4,
-  "cinematic-gold": 5,
-  "karaoke-green": 6,
-  "karaoke-blue": 7,
-  "ella-style": 8,
-  "hormozi-style": 9,
-  "beasty-style": 10,
-  "bold-outline": 11,
-  "gradient-pop": 12,
-  "underline-pop": 13,
-  "shadow-glow": 14,
+  // TikTok styles
+  "tiktok-neon": 0,      // Green activeColor (#50FF12) with purple fill
+  "tiktok-bold": 1,      // Black on gray background
+
+  // Minimal/Clean
+  "minimal-clean": 2,    // White text with bold outline
+  "typewriter-retro": 3, // White typewriter effect
+
+  // Cinematic
+  "cinematic-white": 4,  // Dark text with white border
+  "cinematic-gold": 5,   // White with orange highlight fill
+
+  // Karaoke styles - FIXED: now maps to presets with actual green/blue colors
+  "karaoke-green": 10,   // Green activeColor (#04f827FF) with karaoke animation
+  "karaoke-blue": 16,    // Blue activeColor (#059efc) with karaoke animation
+  "karaoke-gold": 6,     // Yellow/gold (#fcbf03)
+  "karaoke-yellow": 7,   // Yellow (#fffd30) typewriter style
+
+  // Creator styles
+  "ella-style": 8,       // White with ella animation
+  "hormozi-style": 9,    // White with hormozi animation
+  "beasty-style": 11,    // White with beasty animation
+
+  // Color-based presets for easy color selection
+  "bold-outline": 12,    // Gray/black on light background
+  "gradient-pop": 13,    // Mint green activeColor (#80eac9)
+  "pink-magenta": 14,    // Pink/magenta (#ec41e2)
+  "underline-pop": 15,   // White with popline animation
+  "lime-green": 20,      // Lime green activeColor (#b5f026)
+  "bright-green": 23,    // Bright green (#07ed09) with animation
+  "shadow-glow": 19,     // White with shadow animation
 };
 
 /**
@@ -1326,36 +1343,63 @@ export async function executeToolCall(
           };
         }
 
-        // Get all caption items
-        const { trackItemsMap } = editorStore;
-        const groupedCaptions = groupCaptionItems(trackItemsMap);
+        // Apply preset colors to the effects store (which controls AnimatedCaptions)
+        const effects = useEffectsStore.getState();
+        const captionUpdates: Parameters<typeof effects.setCaptions>[0] = {};
 
-        // Apply to all caption groups
-        let appliedCount = 0;
-        for (const sourceUrl in groupedCaptions) {
-          const captions = groupedCaptions[sourceUrl];
-          const captionIds = captions.map((c: { id: string }) => c.id);
+        // Helper to check if a color is visible (not transparent or empty)
+        const isVisibleColor = (color?: string): boolean => {
+          if (!color) return false;
+          const c = color.toLowerCase();
+          return c !== "transparent" && c !== "" && c !== "rgba(0,0,0,0)";
+        };
 
-          await applyPreset(presetConfig, captionIds, captions);
-          appliedCount += captionIds.length;
+        // Smart color extraction for active word:
+        // 1. Use activeColor if it's visible and different from other colors
+        // 2. If activeColor is same as inactive, try activeFillColor for contrast
+        // 3. Fall back to a prominent color
+        let activeColor = presetConfig.activeColor;
+        const inactiveColor = presetConfig.appearedColor || presetConfig.color;
+
+        // If activeColor is the same as inactive, the preset relies on activeFillColor for highlighting
+        // In that case, we should use a contrasting color for active
+        if (activeColor === inactiveColor && isVisibleColor(presetConfig.activeFillColor)) {
+          // The preset uses fill color for emphasis - use that as our active color instead
+          activeColor = presetConfig.activeFillColor;
         }
 
-        if (appliedCount > 0) {
-          toast.success(`Caption style applied`);
+        // Apply the smart-extracted active color
+        if (isVisibleColor(activeColor)) {
+          captionUpdates.activeColor = activeColor;
         }
+
+        // Use appearedColor or color for inactive words
+        if (isVisibleColor(presetConfig.appearedColor)) {
+          captionUpdates.inactiveColor = presetConfig.appearedColor;
+        } else if (isVisibleColor(presetConfig.color)) {
+          captionUpdates.inactiveColor = presetConfig.color;
+        }
+
+        // Map font family if available
+        if (presetConfig.fontFamily) {
+          captionUpdates.fontFamily = presetConfig.fontFamily;
+        }
+
+        effects.setCaptions(captionUpdates);
+        toast.success(`Caption style "${preset}" applied`);
 
         return {
           success: true,
           result: {
-            message: `Applied "${preset}" preset to ${appliedCount} caption(s)`,
+            message: `Applied "${preset}" preset to captions`,
             preset,
-            appliedCount,
+            settings: captionUpdates,
           },
         };
       }
 
       case "customize_caption_style": {
-        const { colors, typography, effects, animation, layout } = toolInput as {
+        const { colors, typography, effects: effectsInput, animation, layout } = toolInput as {
           colors?: {
             activeColor?: string;
             appearedColor?: string;
@@ -1387,64 +1431,54 @@ export async function executeToolCall(
           };
         };
 
-        const { trackItemsMap } = editorStore;
-        const groupedCaptions = groupCaptionItems(trackItemsMap);
+        // Apply custom styles to the effects store (which controls AnimatedCaptions)
+        const effectsStore = useEffectsStore.getState();
+        const captionUpdates: Parameters<typeof effectsStore.setCaptions>[0] = {};
 
-        const updates: Record<string, unknown> = {};
-
+        // Map colors
         if (colors) {
-          if (colors.activeColor) updates.activeColor = colors.activeColor;
-          if (colors.appearedColor) updates.appearedColor = colors.appearedColor;
-          if (colors.baseColor) updates.color = colors.baseColor;
-          if (colors.activeFillColor) updates.activeFillColor = colors.activeFillColor;
+          if (colors.activeColor) {
+            captionUpdates.activeColor = colors.activeColor;
+          }
+          // Use appearedColor or baseColor for inactive words
+          if (colors.appearedColor) {
+            captionUpdates.inactiveColor = colors.appearedColor;
+          } else if (colors.baseColor) {
+            captionUpdates.inactiveColor = colors.baseColor;
+          }
         }
 
+        // Map typography
         if (typography) {
-          if (typography.fontFamily) updates.fontFamily = typography.fontFamily;
-          if (typography.fontSize) updates.fontSize = typography.fontSize;
-          if (typography.textTransform) updates.textTransform = typography.textTransform;
-        }
-
-        if (effects) {
-          if (effects.textStroke !== undefined) {
-            updates.borderWidth = effects.strokeWidth || (effects.textStroke ? 5 : 0);
-            updates.borderColor = effects.strokeColor || "#000000";
+          if (typography.fontFamily) {
+            captionUpdates.fontFamily = typography.fontFamily;
           }
-          if (effects.textShadow !== undefined) {
-            updates.boxShadow = {
-              color: effects.shadowColor || "#000000",
-              x: 15,
-              y: 15,
-              blur: effects.shadowBlur || 30,
-            };
+          if (typography.fontSize) {
+            captionUpdates.fontSize = typography.fontSize;
           }
         }
 
+        // Map animation type
         if (animation) {
-          updates.animation = animation;
-        }
-
-        // Apply to all captions
-        let updatedCount = 0;
-        for (const sourceUrl in groupedCaptions) {
-          const captions = groupedCaptions[sourceUrl];
-          for (const caption of captions) {
-            dispatch(EDIT_OBJECT, {
-              payload: {
-                [caption.id]: {
-                  details: updates,
-                },
-              },
-            });
-            updatedCount++;
+          const animationType = animation.toLowerCase();
+          if (animationType === "pop" || animationType === "slide" || animationType === "fade") {
+            captionUpdates.animationType = animationType;
           }
         }
+
+        // Map layout (window size)
+        if (layout?.linesPerCaption) {
+          captionUpdates.windowSize = layout.linesPerCaption;
+        }
+
+        effectsStore.setCaptions(captionUpdates);
+        toast.success("Caption style updated");
 
         return {
           success: true,
           result: {
-            message: `Updated ${updatedCount} caption style(s)`,
-            updates,
+            message: "Updated caption styles",
+            settings: captionUpdates,
           },
         };
       }
@@ -2537,22 +2571,24 @@ export async function executeToolCall(
           const presetConfig = STYLE_CAPTION_PRESETS[presetIndex];
 
           if (presetConfig) {
-            const { trackItemsMap } = editorStore;
-            const groupedCaptions = groupCaptionItems(trackItemsMap);
+            // Apply caption styles to the effects store
+            const effectsStore = useEffectsStore.getState();
+            const captionUpdates: Parameters<typeof effectsStore.setCaptions>[0] = {};
 
-            let appliedCount = 0;
-            for (const sourceUrl in groupedCaptions) {
-              const captions = groupedCaptions[sourceUrl];
-              const captionIds = captions.map((c: { id: string }) => c.id);
-              await applyPreset(presetConfig, captionIds, captions);
-              appliedCount += captionIds.length;
+            if (presetConfig.activeColor) {
+              captionUpdates.activeColor = presetConfig.activeColor;
+            }
+            if (presetConfig.appearedColor) {
+              captionUpdates.inactiveColor = presetConfig.appearedColor;
+            } else if (presetConfig.color) {
+              captionUpdates.inactiveColor = presetConfig.color;
+            }
+            if (presetConfig.fontFamily) {
+              captionUpdates.fontFamily = presetConfig.fontFamily;
             }
 
-            if (appliedCount > 0) {
-              results.push(`Applied "${style}" caption style`);
-            } else {
-              results.push(`Caption style "${style}" ready (will apply to generated captions)`);
-            }
+            effectsStore.setCaptions(captionUpdates);
+            results.push(`Applied "${style}" caption style`);
           }
         }
 
@@ -2678,22 +2714,24 @@ export async function executeToolCall(
           const presetConfig = STYLE_CAPTION_PRESETS[presetIndex];
 
           if (presetConfig) {
-            const { trackItemsMap } = editorStore;
-            const groupedCaptions = groupCaptionItems(trackItemsMap);
+            // Apply caption styles to the effects store
+            const effectsStore = useEffectsStore.getState();
+            const captionUpdates: Parameters<typeof effectsStore.setCaptions>[0] = {};
 
-            let appliedCount = 0;
-            for (const sourceUrl in groupedCaptions) {
-              const captions = groupedCaptions[sourceUrl];
-              const captionIds = captions.map((c: { id: string }) => c.id);
-              await applyPreset(presetConfig, captionIds, captions);
-              appliedCount += captionIds.length;
+            if (presetConfig.activeColor) {
+              captionUpdates.activeColor = presetConfig.activeColor;
+            }
+            if (presetConfig.appearedColor) {
+              captionUpdates.inactiveColor = presetConfig.appearedColor;
+            } else if (presetConfig.color) {
+              captionUpdates.inactiveColor = presetConfig.color;
+            }
+            if (presetConfig.fontFamily) {
+              captionUpdates.fontFamily = presetConfig.fontFamily;
             }
 
-            if (appliedCount > 0) {
-              results.push(`Applied "${style}" caption style to ${appliedCount} caption(s)`);
-            } else {
-              results.push(`Caption style "${style}" ready (no captions to apply yet)`);
-            }
+            effectsStore.setCaptions(captionUpdates);
+            results.push(`Applied "${style}" caption style`);
           }
         }
 

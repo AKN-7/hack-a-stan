@@ -926,9 +926,16 @@ const useTranscriptStore = create<ITranscriptStore>()(
             const deficit = minSegmentMs - segment.durationMs;
             const padEach = deficit / 2;
 
-            // Extend start earlier and end later (within reason)
+            // Get the clip's last word to limit end padding
+            const clip = clips[segment.clipId];
+            const clipWords = clip?.words || [];
+            const lastWordEndMs = clipWords.length > 0
+              ? Math.max(...clipWords.map(w => w.endMs))
+              : segment.endMs;
+
+            // Extend start earlier and end later, but don't extend past clip content
             segment.startMs = Math.max(0, segment.startMs - padEach);
-            segment.endMs = segment.endMs + padEach;
+            segment.endMs = Math.min(lastWordEndMs, segment.endMs + padEach);
             segment.durationMs = segment.endMs - segment.startMs;
           }
         }
@@ -1009,8 +1016,14 @@ const useTranscriptStore = create<ITranscriptStore>()(
             if (currentSegment.durationMs < minSegmentMs) {
               const deficit = minSegmentMs - currentSegment.durationMs;
               const padEach = deficit / 2;
+
+              // Get the clip's last word to limit end padding
+              const lastWordEndMs = clip.words.length > 0
+                ? Math.max(...clip.words.map(w => w.endMs))
+                : currentSegment.endMs;
+
               currentSegment.startMs = Math.max(0, currentSegment.startMs - padEach);
-              currentSegment.endMs = currentSegment.endMs + padEach;
+              currentSegment.endMs = Math.min(lastWordEndMs, currentSegment.endMs + padEach);
               currentSegment.durationMs = currentSegment.endMs - currentSegment.startMs;
             }
             renderSegments.push(currentSegment);
@@ -1048,11 +1061,13 @@ const useTranscriptStore = create<ITranscriptStore>()(
       },
 
       getTotalDurationMs: () => {
-        // Use audio segments when in audio+broll mode, otherwise use keep segments
+        // Use audio segments when in audio+broll mode, otherwise use render segments
+        // IMPORTANT: Must use getRenderSegments (not getKeepSegments) to match what's actually rendered
+        // When sentenceOrder exists, getRenderSegments uses _getSentenceBasedRenderSegments
         const isAudioBrollMode = get().hasAudioBrollScenario();
         const segments = isAudioBrollMode
           ? get().getAudioSegments()
-          : get().getKeepSegments();
+          : get().getRenderSegments();
         return segments.reduce((total, seg) => total + seg.durationMs, 0);
       },
 

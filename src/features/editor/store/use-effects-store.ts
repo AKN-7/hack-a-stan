@@ -17,6 +17,11 @@ export interface CaptionSettings {
   style: "animated" | "static" | "none";
   animationType: "pop" | "slide" | "fade";
   windowSize: number; // Number of words to show at once
+  // Visual styling
+  activeColor: string; // Color of the currently spoken word
+  inactiveColor: string; // Color of other words
+  fontSize: number;
+  fontFamily: string;
 }
 
 interface IEffectsStore {
@@ -54,6 +59,10 @@ const DEFAULT_CAPTIONS: CaptionSettings = {
   style: "animated",
   animationType: "pop",
   windowSize: 4,
+  activeColor: "#FFFF00", // Yellow for active word
+  inactiveColor: "#FFFFFF", // White for other words
+  fontSize: 68,
+  fontFamily: "Arial, Helvetica, sans-serif",
 };
 
 const useEffectsStore = create<IEffectsStore>()(

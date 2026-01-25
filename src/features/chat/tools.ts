@@ -429,19 +429,19 @@ const captionTools: Tool[] = [
   {
     name: "apply_caption_preset",
     description:
-      "Apply a pre-designed caption style preset. Includes TikTok-style, karaoke, cinematic, and more.",
+      "Apply a pre-designed caption style preset. Use this for themed styles like 'hormozi-style' or 'karaoke-green'. NOTE: If the user asks for a SPECIFIC COLOR (e.g., 'make captions pink', 'use green text'), use customize_caption_style instead with explicit hex color values - presets may not have the exact colors implied by their names.",
     input_schema: {
       type: "object" as const,
       properties: {
         preset: {
           type: "string",
           enum: [
-            "tiktok-neon", "tiktok-bold", "karaoke-green", "karaoke-blue",
+            "tiktok-neon", "tiktok-bold", "karaoke-green", "karaoke-blue", "karaoke-gold",
             "cinematic-white", "cinematic-gold", "minimal-clean", "bold-outline",
             "gradient-pop", "typewriter-retro", "hormozi-style", "beasty-style",
-            "ella-style", "underline-pop", "shadow-glow"
+            "ella-style", "underline-pop", "shadow-glow", "pink-magenta", "lime-green", "bright-green"
           ],
-          description: "Caption style preset name",
+          description: "Caption style preset name. Green presets: 'karaoke-green', 'lime-green', 'bright-green', 'tiktok-neon'. Blue: 'karaoke-blue'. Pink: 'pink-magenta'.",
         },
       },
       required: ["preset"],
@@ -450,16 +450,16 @@ const captionTools: Tool[] = [
   {
     name: "customize_caption_style",
     description:
-      "Customize caption appearance with granular control over colors, fonts, animations, and effects.",
+      "Customize caption appearance with EXACT colors. IMPORTANT: Use this tool (not apply_caption_preset) when the user asks for a SPECIFIC COLOR like 'green captions', 'pink text', 'blue highlighting'. Provide hex color codes directly (e.g., activeColor: '#00FF00' for green, '#FF69B4' for pink, '#0066FF' for blue). This gives precise control over the actual text colors.",
     input_schema: {
       type: "object" as const,
       properties: {
         colors: {
           type: "object",
           properties: {
-            activeColor: { type: "string", description: "Color of word being spoken (hex)" },
-            appearedColor: { type: "string", description: "Color of words already spoken" },
-            baseColor: { type: "string", description: "Color of upcoming words" },
+            activeColor: { type: "string", description: "Color of word being spoken (hex). Use this for the main color the user wants." },
+            appearedColor: { type: "string", description: "Color of words already spoken. Use a lighter/darker shade of activeColor." },
+            baseColor: { type: "string", description: "Color of upcoming words (often white #FFFFFF)" },
             activeFillColor: { type: "string", description: "Background/highlight of active word" },
             keywordColor: { type: "string", description: "Special color for emphasized words" },
           },
@@ -487,19 +487,15 @@ const captionTools: Tool[] = [
         },
         animation: {
           type: "string",
-          enum: [
-            "none", "scale-pop", "scale-pulse", "fade-in", "slide-up", "slide-down",
-            "typewriter", "bounce", "wave", "rotate-random", "translate-bilateral",
-            "hormozi", "beasty", "ella"
-          ],
-          description: "Word-by-word animation effect",
+          enum: ["pop", "slide", "fade"],
+          description: "Word-by-word animation effect: 'pop' (scale bounce), 'slide' (slides up), 'fade' (fades in)",
         },
         layout: {
           type: "object",
           properties: {
             position: { type: "string", enum: ["top", "middle", "bottom"] },
             alignment: { type: "string", enum: ["left", "center", "right"] },
-            linesPerCaption: { type: "number", description: "1-5 lines per caption block" },
+            linesPerCaption: { type: "number", description: "Number of words to show at once (window size). Default 3-4." },
             wordsPerLine: { type: "string", enum: ["auto", "single", "punctuation"] },
           },
         },

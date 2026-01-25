@@ -817,6 +817,10 @@ const Composition = () => {
           windowSize={captionSettings.windowSize}
           style={captionSettings.animationType}
           emphasisPoints={emphasisPoints}
+          activeColor={captionSettings.activeColor}
+          inactiveColor={captionSettings.inactiveColor}
+          fontSize={captionSettings.fontSize}
+          fontFamily={captionSettings.fontFamily}
         />
       )}
 

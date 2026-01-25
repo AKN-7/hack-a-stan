@@ -211,8 +211,13 @@ export function Chat() {
     const activeWords = transcriptStore.getActiveWords();
     const totalDurationMs = transcriptStore.getTotalDurationMs();
 
-    // Build per-clip context
-    const clips = transcriptStore.clipOrder.map((clipId, index) => {
+    // Build per-clip context - ONLY include non-deleted clips
+    const activeClipIds = transcriptStore.clipOrder.filter((clipId) => {
+      const clip = transcriptStore.clips[clipId];
+      return clip && !clip.isDeleted;
+    });
+
+    const clips = activeClipIds.map((clipId, index) => {
       const clip = transcriptStore.clips[clipId];
       if (!clip) return null;
 
@@ -258,7 +263,7 @@ export function Chat() {
     const textHook = transcriptStore.textHook;
 
     return {
-      clipCount: Object.keys(transcriptStore.clips).length,
+      clipCount: activeClipIds.length, // Only count non-deleted clips
       totalDurationMs,
       wordCount: allWords.length,
       deletedCount: allWords.filter((w) => w.isDeleted).length,
@@ -268,8 +273,8 @@ export function Chat() {
         .map((w) => w.text)
         .join(" ")
         .substring(0, 500),
-      clipIds: transcriptStore.clipOrder,
-      clips, // Per-clip details
+      clipIds: activeClipIds, // Only include non-deleted clips
+      clips, // Per-clip details (already filtered)
       overlayElements, // Text, images, etc. on the timeline
       textHook: textHook || null, // Auto-generated opening hook text (if any)
     };

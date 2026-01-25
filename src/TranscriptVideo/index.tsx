@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { z } from "zod";
 import {
   AbsoluteFill,
+  Audio,
   CalculateMetadataFunction,
   OffthreadVideo,
   Sequence,
@@ -21,6 +22,8 @@ const renderSegmentSchema = z.object({
   endMs: z.number(),
   durationMs: z.number(),
   offsetMs: z.number(),
+  clipType: z.enum(["video_with_audio", "audio_only", "video_only", "background_music"]).optional(),
+  volume: z.number().optional(),
 });
 
 // Schema for captions
@@ -267,24 +270,40 @@ export const TranscriptVideo: React.FC<TranscriptVideoProps> = ({
       {transitionFrames > 0 && segmentFrames.length > 1 ? (
         <TransitionSeries>
           {segmentFrames.flatMap(({ segment, durationInFrames, videoStartFrame, videoEndFrame }, index) => {
+            // Check if this is an audio_only segment - render as Audio, not Video
+            const isAudioOnly = segment.clipType === "audio_only";
+
             const elements: React.ReactNode[] = [
               <TransitionSeries.Sequence
                 key={`seq-${segment.clipId}-${index}`}
                 durationInFrames={durationInFrames}
               >
-                <AbsoluteFill>
-                  <OffthreadVideo
-                    src={segment.clipUrl}
-                    startFrom={videoStartFrame}
-                    endAt={videoEndFrame}
-                    style={{
-                      width: "100%",
-                      height: "100%",
-                      objectFit: "cover",
-                      transform: "scale(1.05)",
-                    }}
-                  />
-                </AbsoluteFill>
+                {isAudioOnly ? (
+                  // Audio-only clip: render just the audio (black screen)
+                  <AbsoluteFill style={{ backgroundColor: "#000" }}>
+                    <Audio
+                      src={segment.clipUrl}
+                      startFrom={videoStartFrame}
+                      endAt={videoEndFrame}
+                      volume={segment.volume ?? 1}
+                    />
+                  </AbsoluteFill>
+                ) : (
+                  // Video with audio: render as normal video
+                  <AbsoluteFill>
+                    <OffthreadVideo
+                      src={segment.clipUrl}
+                      startFrom={videoStartFrame}
+                      endAt={videoEndFrame}
+                      style={{
+                        width: "100%",
+                        height: "100%",
+                        objectFit: "cover",
+                        transform: "scale(1.05)",
+                      }}
+                    />
+                  </AbsoluteFill>
+                )}
               </TransitionSeries.Sequence>
             ];
 
@@ -304,27 +323,45 @@ export const TranscriptVideo: React.FC<TranscriptVideoProps> = ({
         </TransitionSeries>
       ) : (
         // Standard rendering without transitions
-        segmentFrames.map(({ segment, startFrame, durationInFrames, videoStartFrame, videoEndFrame }, index) => (
-          <Sequence
-            key={`${segment.clipId}-${index}`}
-            from={startFrame}
-            durationInFrames={durationInFrames}
-          >
-            <AbsoluteFill>
-              <OffthreadVideo
-                src={segment.clipUrl}
-                startFrom={videoStartFrame}
-                endAt={videoEndFrame}
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
-                  transform: "scale(1.05)",
-                }}
-              />
-            </AbsoluteFill>
-          </Sequence>
-        ))
+        segmentFrames.map(({ segment, startFrame, durationInFrames, videoStartFrame, videoEndFrame }, index) => {
+          // Check if this is an audio_only segment
+          const isAudioOnly = segment.clipType === "audio_only";
+
+          return (
+            <Sequence
+              key={`${segment.clipId}-${index}`}
+              from={startFrame}
+              durationInFrames={durationInFrames}
+            >
+              {isAudioOnly ? (
+                // Audio-only clip: render just the audio (black screen)
+                <AbsoluteFill style={{ backgroundColor: "#000" }}>
+                  <Audio
+                    src={segment.clipUrl}
+                    startFrom={videoStartFrame}
+                    endAt={videoEndFrame}
+                    volume={segment.volume ?? 1}
+                  />
+                </AbsoluteFill>
+              ) : (
+                // Video with audio: render as normal video
+                <AbsoluteFill>
+                  <OffthreadVideo
+                    src={segment.clipUrl}
+                    startFrom={videoStartFrame}
+                    endAt={videoEndFrame}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                      transform: "scale(1.05)",
+                    }}
+                  />
+                </AbsoluteFill>
+              )}
+            </Sequence>
+          );
+        })
       )}
     </>
   );
