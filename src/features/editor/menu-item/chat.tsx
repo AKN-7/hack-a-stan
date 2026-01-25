@@ -32,10 +32,11 @@ import {
 import { MessageMarkdown } from "@/components/message-markdown";
 import { ShimmeringText } from "@/components/ui/shimmering-text";
 import useChatStore, { ChatMessage, ToolCall } from "@/features/chat/use-chat-store";
-import useTranscriptStore from "@/features/editor/store/use-transcript-store";
+import useTranscriptStore, { MagicProcessingResult } from "@/features/editor/store/use-transcript-store";
 import useStore from "@/features/editor/store/use-store";
 import { executeToolCall } from "@/features/chat/tool-executor";
 import type Anthropic from "@anthropic-ai/sdk";
+import { ChevronDown, ChevronUp, Check, Undo2, Film, Type as TypeIcon } from "lucide-react";
 
 // Format milliseconds to readable time
 function formatTime(ms: number): string {
@@ -68,10 +69,13 @@ export function Chat() {
   const transcriptStore = useTranscriptStore();
   const editorStore = useStore();
 
-  // Scroll to bottom when messages change
+  // Get magic processing result for display
+  const { magicProcessingResult, clearMagicProcessingResult, isProcessing, processingStatus } = useTranscriptStore();
+
+  // Scroll to bottom when messages change or magic processing completes
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, magicProcessingResult]);
 
   // Auto-scroll quick actions carousel - smooth continuous scroll
   useEffect(() => {
@@ -456,7 +460,8 @@ export function Chat() {
         <div className="flex flex-col min-h-full w-full px-4">
           <div className="flex-1" />
           <div className="space-y-4 py-4 w-full">
-            {messages.length === 0 ? (
+            {/* Empty state */}
+            {messages.length === 0 && !magicProcessingResult && !isProcessing && (
               <div className="text-center text-sm text-muted-foreground py-8">
                 <Sparkles className="h-8 w-8 mx-auto mb-3 text-primary/50" />
                 <p className="font-medium mb-1">AI Video Editor</p>
@@ -464,13 +469,43 @@ export function Chat() {
                   Ask me to edit your video, remove filler words, or generate B-roll.
                 </p>
               </div>
-            ) : (
+            )}
+
+            {/* Magic processing in progress */}
+            {isProcessing && (
+              <div className="w-full rounded-xl border border-primary/20 bg-gradient-to-br from-primary/5 to-purple-500/5 p-4">
+                <div className="flex items-center gap-3">
+                  <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                    <Loader2 className="h-4 w-4 text-primary animate-spin" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-semibold text-foreground">Magic Processing...</div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      {processingStatus || "Analyzing your clips..."}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Magic processing result */}
+            {magicProcessingResult && !isProcessing && (
+              <MagicProcessingSummary
+                result={magicProcessingResult}
+                onDismiss={clearMagicProcessingResult}
+              />
+            )}
+
+            {/* Chat messages */}
+            {messages.length > 0 && (
               messages
                 .filter((msg) => msg.role === "user" || msg.content || msg.toolCalls?.length)
                 .map((message) => (
                   <MessageBubble key={message.id} message={message} isLoading={isLoading} />
                 ))
             )}
+
+            {/* Chat loading state */}
             {isLoading && !messages.some((m) => m.role === "assistant" && (m.content || m.toolCalls?.length)) && (
               <ShimmeringText
                 text="Thinking..."
@@ -575,12 +610,14 @@ function MessageBubble({ message, isLoading }: { message: ChatMessage; isLoading
 
   return (
     <div className={cn("flex w-full flex-col gap-2", isUser ? "items-end" : "items-start")}>
-      {/* Tool calls - show BEFORE the message for assistant */}
+      {/* Tool calls - use collapsed view for multiple tools */}
       {!isUser && message.toolCalls && message.toolCalls.length > 0 && (
-        <div className="w-full space-y-2">
-          {message.toolCalls.map((tool) => (
-            <ToolCallCard key={tool.id} toolCall={tool} />
-          ))}
+        <div className="w-full">
+          {message.toolCalls.length > 1 ? (
+            <CollapsedToolCalls toolCalls={message.toolCalls} />
+          ) : (
+            <ToolCallCard toolCall={message.toolCalls[0]} />
+          )}
         </div>
       )}
 
@@ -650,7 +687,238 @@ const TOOL_META: Record<string, { name: string; icon: React.ElementType; categor
   auto_enhance: { name: "Auto Enhance", icon: Sparkles, category: "Edit", color: "text-amber-500", progressMessage: "Auto-enhancing your video..." },
 };
 
-// Tool call card component
+// Collapsed tool calls display - Grok-style compact view
+function CollapsedToolCalls({ toolCalls }: { toolCalls: ToolCall[] }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  if (toolCalls.length === 0) return null;
+
+  const completedCount = toolCalls.filter(t => t.result !== undefined).length;
+  const isAllDone = completedCount === toolCalls.length;
+  const hasError = toolCalls.some(t => t.isError);
+  const currentTool = toolCalls.find(t => t.result === undefined) || toolCalls[toolCalls.length - 1];
+  const currentMeta = TOOL_META[currentTool.name] || { name: currentTool.name, icon: Wand2, progressMessage: "Processing..." };
+  const CurrentIcon = currentMeta.icon;
+
+  return (
+    <div
+      className={cn(
+        "w-full rounded-lg border overflow-hidden transition-all duration-300",
+        hasError
+          ? "border-red-200 bg-red-50"
+          : isAllDone
+          ? "border-green-200 bg-green-50/50"
+          : "border-primary/20 bg-primary/5"
+      )}
+    >
+      {/* Collapsed header - always visible */}
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full px-3 py-2 flex items-center gap-2 hover:bg-black/5 transition-colors"
+      >
+        {/* Status icon */}
+        {!isAllDone ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-primary shrink-0" />
+        ) : hasError ? (
+          <X className="h-3.5 w-3.5 text-red-500 shrink-0" />
+        ) : (
+          <Check className="h-3.5 w-3.5 text-green-600 shrink-0" />
+        )}
+
+        {/* Current action / summary */}
+        <div className="flex-1 min-w-0 text-left">
+          <span className="text-xs text-muted-foreground">
+            {!isAllDone ? (
+              <>
+                <span className="font-medium text-foreground">{currentMeta.name}</span>
+                {" · "}{currentMeta.progressMessage}
+              </>
+            ) : (
+              <span className="text-green-700">
+                {toolCalls.length} action{toolCalls.length > 1 ? "s" : ""} completed
+              </span>
+            )}
+          </span>
+        </div>
+
+        {/* Expand indicator */}
+        <div className="flex items-center gap-1.5 text-muted-foreground shrink-0">
+          <span className="text-[10px]">{completedCount}/{toolCalls.length}</span>
+          {isExpanded ? (
+            <ChevronUp className="h-3 w-3" />
+          ) : (
+            <ChevronDown className="h-3 w-3" />
+          )}
+        </div>
+      </button>
+
+      {/* Expanded details */}
+      {isExpanded && (
+        <div className="border-t border-black/5 px-3 py-2 space-y-1.5">
+          {toolCalls.map((tool) => {
+            const meta = TOOL_META[tool.name] || { name: tool.name, icon: Wand2 };
+            const Icon = meta.icon;
+            const hasResult = tool.result !== undefined;
+            return (
+              <div key={tool.id} className="flex items-center gap-2 text-xs">
+                {!hasResult ? (
+                  <Loader2 className="h-3 w-3 animate-spin text-primary shrink-0" />
+                ) : tool.isError ? (
+                  <X className="h-3 w-3 text-red-500 shrink-0" />
+                ) : (
+                  <Check className="h-3 w-3 text-green-600 shrink-0" />
+                )}
+                <span className={cn(
+                  "truncate",
+                  hasResult && !tool.isError && "text-muted-foreground"
+                )}>
+                  {meta.name}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Magic Processing Summary - shows results of auto-magic processing
+function MagicProcessingSummary({ result, onDismiss }: { result: MagicProcessingResult; onDismiss?: () => void }) {
+  const [isExpanded, setIsExpanded] = useState(true);
+  const { restoreClip, clipOrder, clips } = useTranscriptStore();
+
+  const hasChanges = result.fillerCount > 0 || result.aiCutsCount > 0 || result.clipsRemoved > 0 || result.textHook;
+
+  if (!hasChanges) return null;
+
+  const timeSavedSec = (result.timeSavedMs / 1000).toFixed(1);
+
+  return (
+    <div className="w-full rounded-xl border border-primary/20 bg-gradient-to-br from-primary/5 to-purple-500/5 overflow-hidden">
+      {/* Header */}
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full px-4 py-3 flex items-center gap-3 hover:bg-black/5 transition-colors"
+      >
+        <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+          <Sparkles className="h-4 w-4 text-primary" />
+        </div>
+        <div className="flex-1 min-w-0 text-left">
+          <div className="text-sm font-semibold text-foreground">Magic Complete</div>
+          <div className="text-xs text-muted-foreground">
+            Saved {timeSavedSec}s · {result.fillerCount + result.aiCutsCount} cuts
+          </div>
+        </div>
+        {isExpanded ? (
+          <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" />
+        ) : (
+          <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+        )}
+      </button>
+
+      {/* Expanded content */}
+      {isExpanded && (
+        <div className="px-4 pb-4 space-y-3">
+          {/* Clips removed */}
+          {result.clipsRemoved > 0 && result.removedClipIds && (
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-red-600">
+                <Film className="h-3.5 w-3.5" />
+                <span>{result.clipsRemoved} clip{result.clipsRemoved > 1 ? "s" : ""} removed</span>
+              </div>
+              <div className="pl-5 space-y-1">
+                {result.removedClipIds.map((clipId) => {
+                  const clip = clips[clipId];
+                  const clipIndex = clipOrder.indexOf(clipId) + 1;
+                  const isDeleted = clip?.isDeleted;
+                  return (
+                    <div key={clipId} className="flex items-center justify-between text-xs">
+                      <span className={cn(
+                        "truncate",
+                        isDeleted ? "text-muted-foreground" : "text-green-600 line-through"
+                      )}>
+                        Clip {clipIndex}: {clip?.deleteReason || "Duplicate take"}
+                      </span>
+                      {isDeleted ? (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            restoreClip(clipId);
+                          }}
+                          className="flex items-center gap-1 text-primary hover:underline shrink-0 ml-2"
+                        >
+                          <Undo2 className="h-3 w-3" />
+                          Restore
+                        </button>
+                      ) : (
+                        <span className="flex items-center gap-1 text-green-600 shrink-0 ml-2">
+                          <Check className="h-3 w-3" />
+                          Restored
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Words cut */}
+          {(result.fillerCount > 0 || result.aiCutsCount > 0) && (
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-orange-600">
+                <Scissors className="h-3.5 w-3.5" />
+                <span>{result.fillerCount + result.aiCutsCount} words removed</span>
+              </div>
+              <div className="pl-5 text-xs text-muted-foreground">
+                {result.fillerCount > 0 && <div>{result.fillerCount} filler words (um, uh, like...)</div>}
+                {result.wordCuts && result.wordCuts.length > 0 && (
+                  <div className="space-y-0.5 mt-1">
+                    {result.wordCuts.slice(0, 3).map((cut, i) => (
+                      <div key={i} className="truncate">
+                        "{cut.text}" - {cut.reason}
+                      </div>
+                    ))}
+                    {result.wordCuts.length > 3 && (
+                      <div className="text-muted-foreground/70">
+                        +{result.wordCuts.length - 3} more...
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Text hook */}
+          {result.textHook && (
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-indigo-600">
+                <TypeIcon className="h-3.5 w-3.5" />
+                <span>Text hook added</span>
+              </div>
+              <div className="pl-5">
+                <div className="text-xs bg-indigo-50 text-indigo-800 px-2 py-1.5 rounded font-medium">
+                  "{result.textHook}"
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* AI reasoning */}
+          {result.reasoning && (
+            <div className="text-[11px] text-muted-foreground/80 italic pt-1 border-t border-black/5">
+              {result.reasoning}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Tool call card component (for single tool calls or when not using collapsed view)
 function ToolCallCard({ toolCall }: { toolCall: ToolCall }) {
   const meta = TOOL_META[toolCall.name] || {
     name: toolCall.name,

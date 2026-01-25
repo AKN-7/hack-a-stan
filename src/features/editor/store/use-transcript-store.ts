@@ -76,6 +76,20 @@ interface HistorySnapshot {
   gapThresholdMs: number;
 }
 
+// Magic processing result for display in chat
+export interface MagicProcessingResult {
+  fillerCount: number;
+  aiCutsCount: number;
+  clipsRemoved: number;
+  timeSavedMs: number;
+  textHook?: string;
+  removedClipIds?: string[];
+  suggestedOrder?: string[];
+  reasoning?: string;
+  wordCuts?: Array<{ clipId: string; text: string; reason: string }>;
+  completedAt: number; // timestamp
+}
+
 interface ITranscriptStore {
   // Per-clip transcripts
   clips: Record<string, ClipTranscript>;
@@ -93,6 +107,8 @@ interface ITranscriptStore {
   isProcessing: boolean;
   processingStatus: string;
   _hasRunMagicProcessing: boolean; // Prevents running twice
+  magicProcessingResult: MagicProcessingResult | null; // Latest result for chat display
+  clearMagicProcessingResult: () => void;
 
   // Auto-process when all clips are transcribed
   _checkAndAutoProcess: () => void;
@@ -193,7 +209,9 @@ const useTranscriptStore = create<ITranscriptStore>()(
       isProcessing: false,
       processingStatus: "",
       _hasRunMagicProcessing: false,
-      resetMagicProcessing: () => set({ _hasRunMagicProcessing: false }),
+      magicProcessingResult: null,
+      clearMagicProcessingResult: () => set({ magicProcessingResult: null }),
+      resetMagicProcessing: () => set({ _hasRunMagicProcessing: false, magicProcessingResult: null }),
 
       // History state
       _history: [],
@@ -522,10 +540,15 @@ const useTranscriptStore = create<ITranscriptStore>()(
       // Soft delete a clip (marks as deleted but keeps in store for restore)
       removeClip: (clipId: string, reason?: string) => {
         get()._pushHistory();
+        console.log(`[Transcript] Soft-deleting clip: ${clipId}, reason: ${reason}`);
         set((state) => {
           const clip = state.clips[clipId];
-          if (!clip) return state;
+          if (!clip) {
+            console.warn(`[Transcript] Clip not found for removal: ${clipId}`);
+            return state;
+          }
 
+          console.log(`[Transcript] Clip ${clipId} marked as deleted (soft delete)`);
           return {
             clips: {
               ...state.clips,
@@ -542,6 +565,9 @@ const useTranscriptStore = create<ITranscriptStore>()(
       // Restore a soft-deleted clip
       restoreClip: (clipId: string) => {
         get()._pushHistory();
+        const clipOrder = get().clipOrder;
+        const clipIndex = clipOrder.indexOf(clipId) + 1;
+
         set((state) => {
           const clip = state.clips[clipId];
           if (!clip) return state;
@@ -557,6 +583,9 @@ const useTranscriptStore = create<ITranscriptStore>()(
             },
           };
         });
+
+        console.log(`[Transcript] Restored clip ${clipIndex} (${clipId})`);
+        toast.success(`Clip ${clipIndex} restored`);
       },
 
       // Permanently remove a clip from the store
@@ -1224,6 +1253,9 @@ const useTranscriptStore = create<ITranscriptStore>()(
         let clipsRemoved = 0;
         let aiSuggestedOrder: string[] | null = null;
         let aiReasoning = "";
+        let aiTextHook = "";
+        let removedClipIds: string[] = [];
+        let wordCuts: Array<{ clipId: string; text: string; reason: string }> = [];
 
         try {
           // Step 1: Remove basic filler words (um, uh, like, etc.)
@@ -1297,6 +1329,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
                     const reason = `AI detected: duplicate take (better version exists in another clip)`;
                     removeClip(clipIdToRemove, reason);
                     clipsRemoved++;
+                    removedClipIds.push(clipIdToRemove);
                     console.log(`[Auto-Magic] Removed clip ${clipIndex} - ${clipIdToRemove} (bad take)`);
                   }
                 }
@@ -1308,6 +1341,14 @@ const useTranscriptStore = create<ITranscriptStore>()(
                 deleteWords(result.wordIdsToDelete);
                 aiCutsCount = result.wordIdsToDelete.length;
                 console.log(`[Auto-Magic] AI cut ${aiCutsCount} words across ${result.wordCuts?.length || 0} sections`);
+                // Capture word cuts for display
+                if (result.wordCuts) {
+                  wordCuts = result.wordCuts.map((cut: any) => ({
+                    clipId: cut.clipId,
+                    text: cut.text,
+                    reason: cut.reason,
+                  }));
+                }
                 result.wordCuts?.forEach((cut: any) => {
                   console.log(`  - Clip ${cut.clipId}: "${cut.text}" (${cut.reason})`);
                 });
@@ -1321,6 +1362,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
 
               // Step 2d: Add text hook overlay if AI generated one
               if (result.textHook && result.textHook.length > 0) {
+                aiTextHook = result.textHook; // Capture for result
                 set({ processingStatus: "Adding attention-grabbing text hook..." });
                 try {
                   const editorStore = await getEditorStore();
@@ -1424,7 +1466,21 @@ const useTranscriptStore = create<ITranscriptStore>()(
 
           console.log(`[Auto-Magic] Complete! Clips removed: ${clipsRemoved}, Words cut: ${totalWordsCut}, Time saved: ${timeSavedSec}s`);
 
-          set({ isProcessing: false, processingStatus: "" });
+          // Store the full result for chat display
+          const processingResult: MagicProcessingResult = {
+            fillerCount,
+            aiCutsCount,
+            clipsRemoved,
+            timeSavedMs,
+            textHook: aiTextHook || undefined,
+            removedClipIds: removedClipIds.length > 0 ? removedClipIds : undefined,
+            suggestedOrder: aiSuggestedOrder || undefined,
+            reasoning: aiReasoning || undefined,
+            wordCuts: wordCuts.length > 0 ? wordCuts : undefined,
+            completedAt: Date.now(),
+          };
+
+          set({ isProcessing: false, processingStatus: "", magicProcessingResult: processingResult });
 
           return {
             fillerCount,
