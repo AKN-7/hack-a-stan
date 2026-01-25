@@ -39,7 +39,8 @@ export interface ClipTrim {
 // - "video_with_audio": Standard video clip with speech (default, has transcript)
 // - "audio_only": Audio file (m4a, mp3, etc.) - provides audio track + transcript for captions
 // - "video_only": Video without audio/speech - used as B-roll over audio clips
-export type ClipType = "video_with_audio" | "audio_only" | "video_only";
+// - "background_music": Audio file with no speech - background music track
+export type ClipType = "video_with_audio" | "audio_only" | "video_only" | "background_music";
 
 // Clip transcript status
 export interface ClipTranscript {
@@ -54,6 +55,7 @@ export interface ClipTranscript {
   deleteReason?: string;  // Why the clip was deleted (e.g., "Duplicate take - better version in Clip 3")
   clipType?: ClipType;  // Type of clip (default: video_with_audio)
   durationMs?: number;  // Duration of the clip in ms (needed for video_only clips without words)
+  volume?: number;  // Volume level 0-1 (default: 1 for video, 0.3 for background_music)
 }
 
 // Segment to cut from video
@@ -195,6 +197,7 @@ interface ITranscriptStore {
   getAudioOnlyClips: () => ClipTranscript[];
   getVideoOnlyClips: () => ClipTranscript[];
   getVideoWithAudioClips: () => ClipTranscript[];
+  getBackgroundMusicClips: () => ClipTranscript[];
   hasAudioBrollScenario: () => boolean;
   hasAudioClipsNeedingBroll: () => boolean;
 
@@ -209,6 +212,7 @@ interface ITranscriptStore {
   addClip: (clipId: string, url: string, clipType?: ClipType, durationMs?: number) => void;
   setClipType: (clipId: string, clipType: ClipType) => void;
   setClipDurationMs: (clipId: string, durationMs: number) => void;
+  setClipVolume: (clipId: string, volume: number) => void;  // Set clip volume (0-1)
   removeClip: (clipId: string, reason?: string) => void;  // Soft delete with optional reason
   restoreClip: (clipId: string) => void;  // Restore a soft-deleted clip
   hardRemoveClip: (clipId: string) => void;  // Permanently remove a clip
@@ -362,6 +366,13 @@ const useTranscriptStore = create<ITranscriptStore>()(
 
         if (_historyIndex < 0) return false;
 
+        // IMPORTANT: Clear any pending auto-magic debounce timers
+        // This prevents undo from re-triggering magic processing
+        if (autoMagicDebounceTimer) {
+          clearTimeout(autoMagicDebounceTimer);
+          autoMagicDebounceTimer = null;
+        }
+
         // If we're at the end and haven't saved current state, save it first
         if (_historyIndex === _history.length - 1) {
           // Save current state so we can redo back to it
@@ -409,6 +420,12 @@ const useTranscriptStore = create<ITranscriptStore>()(
         const { _history, _historyIndex } = get();
 
         if (_historyIndex >= _history.length - 1) return false;
+
+        // Clear any pending auto-magic debounce timers
+        if (autoMagicDebounceTimer) {
+          clearTimeout(autoMagicDebounceTimer);
+          autoMagicDebounceTimer = null;
+        }
 
         const snapshot = _history[_historyIndex + 1];
         set({
@@ -682,6 +699,14 @@ const useTranscriptStore = create<ITranscriptStore>()(
           .filter(clip => clip && !clip.isDeleted && clip.clipType === "video_with_audio" && clip.status === "ready" && clip.words.length > 0);
       },
 
+      // Get clips that are background music (audio files with no speech)
+      getBackgroundMusicClips: () => {
+        const { clips, clipOrder } = get();
+        return clipOrder
+          .map(id => clips[id])
+          .filter(clip => clip && !clip.isDeleted && clip.clipType === "background_music" && clip.status === "ready");
+      },
+
       // Check if we have the PURE audio + B-roll scenario
       // True ONLY when:
       // - At least one audio_only clip exists
@@ -837,6 +862,13 @@ const useTranscriptStore = create<ITranscriptStore>()(
       },
 
       addClip: (clipId: string, url: string, clipType?: ClipType, durationMs?: number) => {
+        const existingClip = get().clips[clipId];
+        // Don't overwrite clips that are already transcribed (ready) or currently transcribing
+        if (existingClip && (existingClip.status === "ready" || existingClip.status === "transcribing")) {
+          console.log(`[addClip] Skipping - clip ${clipId} already exists with status: ${existingClip.status}`);
+          return;
+        }
+
         set((state) => ({
           clips: {
             ...state.clips,
@@ -882,6 +914,22 @@ const useTranscriptStore = create<ITranscriptStore>()(
               [clipId]: {
                 ...clip,
                 durationMs,
+              },
+            },
+          };
+        });
+      },
+
+      setClipVolume: (clipId: string, volume: number) => {
+        set((state) => {
+          const clip = state.clips[clipId];
+          if (!clip) return state;
+          return {
+            clips: {
+              ...state.clips,
+              [clipId]: {
+                ...clip,
+                volume: Math.max(0, Math.min(1, volume)), // Clamp 0-1
               },
             },
           };
@@ -1029,14 +1077,22 @@ const useTranscriptStore = create<ITranscriptStore>()(
           if (!clip) return state;
 
           // Determine clip type based on transcription result
-          // If video file has no words, it's B-roll (video_only)
-          // If audio file has words, keep it as audio_only
+          // - Video with no speech → video_only (B-roll)
+          // - Audio with no speech → background_music
+          // - Audio with speech → audio_only (voice recording/podcast)
+          // - Video with speech → video_with_audio (default)
           let clipType = clip.clipType || "video_with_audio";
 
-          if (words.length === 0 && clip.clipType === "video_with_audio") {
-            // Video with no speech = B-roll
-            clipType = "video_only";
-            console.log(`[Transcript] Clip ${clipId} marked as video_only (B-roll) - no speech detected`);
+          if (words.length === 0) {
+            if (clip.clipType === "audio_only") {
+              // Audio file with no speech = background music
+              clipType = "background_music";
+              console.log(`[Transcript] Clip ${clipId} marked as background_music - no speech detected in audio`);
+            } else if (clip.clipType === "video_with_audio") {
+              // Video with no speech = B-roll
+              clipType = "video_only";
+              console.log(`[Transcript] Clip ${clipId} marked as video_only (B-roll) - no speech detected`);
+            }
           }
 
           return {
@@ -1506,6 +1562,16 @@ const useTranscriptStore = create<ITranscriptStore>()(
           return;
         }
 
+        // Don't re-transcribe clips that are already ready or currently transcribing
+        if (clip.status === "ready") {
+          console.log(`[transcribeClip] Skipping - clip ${clipId} already transcribed`);
+          return;
+        }
+        if (clip.status === "transcribing") {
+          console.log(`[transcribeClip] Skipping - clip ${clipId} already transcribing`);
+          return;
+        }
+
         setClipStatus(clipId, "transcribing");
 
         try {
@@ -1771,11 +1837,62 @@ const useTranscriptStore = create<ITranscriptStore>()(
                 });
               }
 
-              // Step 2e: Store text hook for direct rendering (bypasses DesignCombo animation system)
+              // Step 2e: Create text hook as a proper timeline item (editable/moveable)
               if (result.textHook && result.textHook.length > 0) {
                 aiTextHook = result.textHook;
-                set({ processingStatus: "Adding attention-grabbing text hook...", textHook: result.textHook });
-                console.log(`[Auto-Magic] Set text hook: "${result.textHook}"`);
+                set({ processingStatus: "Adding attention-grabbing text hook..." });
+
+                // Get editor store for video dimensions
+                try {
+                  const editorStore = await getEditorStore();
+                  const { size } = editorStore.getState();
+                  const hookId = `text-hook-${nanoid(8)}`;
+
+                  // Build payload for text hook - rounded pill design with big text
+                  const hookWidth = Math.round(size.width * 0.75); // 75% width for bigger text
+                  const hookPayload = {
+                    id: hookId,
+                    type: "text",
+                    display: {
+                      from: 0,
+                      to: 4000, // 4 seconds
+                    },
+                    details: {
+                      text: result.textHook,
+                      fontSize: 56,
+                      fontFamily: "Inter-Bold",
+                      color: "#000000",
+                      backgroundColor: "#ffffff",
+                      textAlign: "center",
+                      width: hookWidth,
+                      height: 120, // Height for rounded pill with big text + vertical padding
+                      top: Math.round(size.height * 0.06),
+                      left: Math.round((size.width - hookWidth) / 2), // Center horizontally
+                      wordWrap: "break-word",
+                      borderWidth: 0,
+                      borderColor: "#000000",
+                      borderRadius: 40, // Full rounded pill corners
+                      paddingTop: 28,
+                      paddingBottom: 28,
+                      paddingLeft: 24,
+                      paddingRight: 24,
+                      boxShadow: { color: "rgba(0,0,0,0.12)", x: 0, y: 4, blur: 16 },
+                    },
+                  };
+
+                  // Dispatch to DesignCombo state manager
+                  dispatch(ADD_TEXT, {
+                    payload: hookPayload,
+                    options: {},
+                  });
+
+                  // Store the hook text for AI agent reference
+                  set({ textHook: result.textHook });
+                  console.log(`[Auto-Magic] Created text hook as timeline item: "${result.textHook}" (id: ${hookId})`);
+                } catch (hookError) {
+                  console.warn("[Auto-Magic] Failed to create text hook as timeline item, using fallback:", hookError);
+                  set({ textHook: result.textHook });
+                }
               }
             }
           } catch (aiError) {
@@ -1835,6 +1952,39 @@ const useTranscriptStore = create<ITranscriptStore>()(
               console.log(`[Auto-Magic] Applied AI-suggested order: ${finalOrder.join(" → ")}`);
               console.log(`[Auto-Magic] Reasoning: ${aiReasoning}`);
             }
+          }
+
+          // Step 6: Enable visual effects for polished output
+          set({ processingStatus: "Applying visual effects...", processingStep: 4 });
+          try {
+            const effectsStore = await getEffectsStore();
+            const effects = effectsStore.getState();
+
+            // Enable jump-cut smoothing (subtle 5% zoom on alternate segments)
+            effects.setSegmentZoom({
+              enabled: true,
+              amount: 1.05,
+              pattern: "alternate",
+            });
+            console.log("[Auto-Magic] Enabled jump-cut smoothing (5% zoom)");
+
+            // Enable smooth fade transitions between segments
+            effects.setTransitions({
+              enabled: true,
+              type: "fade",
+              durationMs: 150, // Quick, subtle transitions
+            });
+            console.log("[Auto-Magic] Enabled fade transitions (150ms)");
+
+            // Ensure caption animations are on with pop style
+            effects.setCaptions({
+              style: "animated",
+              animationType: "pop",
+              windowSize: 4,
+            });
+            console.log("[Auto-Magic] Enabled animated captions (pop style)");
+          } catch (effectsError) {
+            console.warn("[Auto-Magic] Failed to enable effects:", effectsError);
           }
 
           // Calculate results

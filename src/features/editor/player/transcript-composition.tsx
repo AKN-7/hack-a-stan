@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { AbsoluteFill, Sequence, OffthreadVideo, useCurrentFrame } from "remotion";
+import { AbsoluteFill, Sequence, OffthreadVideo, Audio, useCurrentFrame } from "remotion";
 import useTranscriptStore from "../store/use-transcript-store";
 import useStore from "../store/use-store";
 import { calculateSegmentFrames } from "../utils/segment-frames";
@@ -27,6 +27,8 @@ const TranscriptComposition = ({ showCaptions = false }: TranscriptCompositionPr
   const clipOrder = useTranscriptStore((state) => state.clipOrder);
   const getRenderSegments = useTranscriptStore((state) => state.getRenderSegments);
   const getCaptionsForRender = useTranscriptStore((state) => state.getCaptionsForRender);
+  const getBackgroundMusicClips = useTranscriptStore((state) => state.getBackgroundMusicClips);
+  const getTotalDurationMs = useTranscriptStore((state) => state.getTotalDurationMs);
 
   // Memoize render segments to avoid recalculating on every frame
   const renderSegments = useMemo(
@@ -39,6 +41,19 @@ const TranscriptComposition = ({ showCaptions = false }: TranscriptCompositionPr
     () => getCaptionsForRender(),
     [clips, clipOrder, getCaptionsForRender]
   );
+
+  // Get background music clips
+  const backgroundMusic = useMemo(
+    () => getBackgroundMusicClips(),
+    [clips, clipOrder, getBackgroundMusicClips]
+  );
+
+  // Get total duration for music to span
+  const totalDurationMs = useMemo(
+    () => getTotalDurationMs(),
+    [clips, clipOrder, getTotalDurationMs]
+  );
+  const totalDurationFrames = Math.ceil((totalDurationMs / 1000) * fps);
 
   // Calculate current time in the edited timeline
   const currentTimeMs = (frame / fps) * 1000;
@@ -99,6 +114,33 @@ const TranscriptComposition = ({ showCaptions = false }: TranscriptCompositionPr
           </AbsoluteFill>
         </Sequence>
       ))}
+
+      {/* Background music - each clip can be trimmed */}
+      {backgroundMusic.map((music, index) => {
+        const musicDurationMs = music.durationMs || totalDurationMs;
+        const trimStart = music.trim?.startMs ?? 0;
+        const trimEnd = music.trim?.endMs ?? musicDurationMs;
+        const trimmedDurationMs = trimEnd - trimStart;
+        const effectiveDurationMs = Math.min(trimmedDurationMs, totalDurationMs);
+        const durationInFrames = Math.ceil((effectiveDurationMs / 1000) * fps);
+        const audioStartFrame = Math.floor((trimStart / 1000) * fps);
+        const audioEndFrame = Math.floor((trimEnd / 1000) * fps);
+
+        return (
+          <Sequence
+            key={`music-${music.clipId}-${index}`}
+            from={0}
+            durationInFrames={durationInFrames}
+          >
+            <Audio
+              src={music.url}
+              startFrom={audioStartFrame}
+              endAt={audioEndFrame}
+              volume={music.volume ?? 0.12}
+            />
+          </Sequence>
+        );
+      })}
 
       {/* Caption overlay - 3 words at a time */}
       {showCaptions && currentCaption && (

@@ -13,6 +13,11 @@ export interface WordCaption {
   endMs: number;
 }
 
+export interface EmphasisPoint {
+  startMs: number;
+  endMs: number;
+}
+
 interface AnimatedCaptionsProps {
   words: WordCaption[];
   /** Number of words to show at once (default: 3) */
@@ -22,6 +27,8 @@ interface AnimatedCaptionsProps {
   /** Color scheme */
   activeColor?: string;
   inactiveColor?: string;
+  /** Emphasis points for combo effects (extra pop on key moments) */
+  emphasisPoints?: EmphasisPoint[];
 }
 
 /**
@@ -34,6 +41,7 @@ export const AnimatedCaptions: React.FC<AnimatedCaptionsProps> = ({
   style = "pop",
   activeColor = "#FFFF00",  // Yellow for active word
   inactiveColor = "#FFFFFF", // White for other words
+  emphasisPoints = [],
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -96,6 +104,11 @@ export const AnimatedCaptions: React.FC<AnimatedCaptionsProps> = ({
           // For words not yet spoken in this chunk, they should appear but not animate
           const hasAppeared = currentTimeMs >= word.startMs;
 
+          // Check if this word is during an emphasis moment (combo effect)
+          const isEmphasis = emphasisPoints.some(
+            (ep) => word.startMs >= ep.startMs && word.startMs <= ep.endMs
+          );
+
           return (
             <AnimatedWord
               key={`${word.text}-${word.startMs}`}
@@ -107,6 +120,7 @@ export const AnimatedCaptions: React.FC<AnimatedCaptionsProps> = ({
               activeColor={activeColor}
               inactiveColor={inactiveColor}
               hasAppeared={hasAppeared}
+              isEmphasis={isEmphasis && isCurrent}
             />
           );
         })}
@@ -124,6 +138,7 @@ interface AnimatedWordProps {
   activeColor: string;
   inactiveColor: string;
   hasAppeared: boolean;
+  isEmphasis?: boolean; // Extra pop for emphasis moments (combo effect)
 }
 
 const AnimatedWord: React.FC<AnimatedWordProps> = ({
@@ -135,6 +150,7 @@ const AnimatedWord: React.FC<AnimatedWordProps> = ({
   activeColor,
   inactiveColor,
   hasAppeared,
+  isEmphasis = false,
 }) => {
   // Subtle pop animation on entrance (scale 0.85 -> 1.0)
   const entranceProgress = hasAppeared
@@ -151,9 +167,11 @@ const AnimatedWord: React.FC<AnimatedWordProps> = ({
     : 0;
 
   // Subtle scale animation on entrance only
-  const scale = animationStyle === "pop" && hasAppeared
+  // Emphasis moments get extra scale boost (1.15x instead of 1.0x)
+  const baseScale = animationStyle === "pop" && hasAppeared
     ? interpolate(entranceProgress, [0, 1], [0.85, 1], { extrapolateRight: "clamp" })
     : 1;
+  const scale = isEmphasis ? baseScale * 1.15 : baseScale;
 
   // Y offset for slide animation
   const translateY = animationStyle === "slide" && hasAppeared
@@ -161,13 +179,18 @@ const AnimatedWord: React.FC<AnimatedWordProps> = ({
     : 0;
 
   // Color logic:
+  // - Emphasis word: special glow color (cyan/electric)
   // - Current word (being spoken): activeColor (yellow)
   // - Already spoken: inactiveColor (white)
   // - Not yet spoken: dimmed gray
   let textColor: string;
   let opacity: number;
 
-  if (isCurrent) {
+  if (isEmphasis) {
+    // Emphasis moments get electric cyan color
+    textColor = "#00FFFF";
+    opacity = 1;
+  } else if (isCurrent) {
     textColor = activeColor;
     opacity = 1;
   } else if (hasAppeared) {
@@ -180,13 +203,23 @@ const AnimatedWord: React.FC<AnimatedWordProps> = ({
   }
 
   // Text stroke for readability (black outline)
-  const textShadow = [
-    "-2px -2px 0 #000",
-    "2px -2px 0 #000",
-    "-2px 2px 0 #000",
-    "2px 2px 0 #000",
-    "0 0 10px rgba(0,0,0,0.8)",
-  ].join(", ");
+  // Emphasis words get extra glow effect
+  const textShadow = isEmphasis
+    ? [
+        "-2px -2px 0 #000",
+        "2px -2px 0 #000",
+        "-2px 2px 0 #000",
+        "2px 2px 0 #000",
+        "0 0 20px rgba(0,255,255,0.8)", // Cyan glow
+        "0 0 40px rgba(0,255,255,0.5)", // Outer glow
+      ].join(", ")
+    : [
+        "-2px -2px 0 #000",
+        "2px -2px 0 #000",
+        "-2px 2px 0 #000",
+        "2px 2px 0 #000",
+        "0 0 10px rgba(0,0,0,0.8)",
+      ].join(", ");
 
   return (
     <span

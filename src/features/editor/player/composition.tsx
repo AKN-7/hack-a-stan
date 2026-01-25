@@ -35,7 +35,10 @@ const Composition = () => {
   const getCaptionsForRender = useTranscriptStore((state) => state.getCaptionsForRender);
   const emphasisPointsRaw = useTranscriptStore((state) => state.emphasisPoints);
   const getEmphasisPointsForRender = useTranscriptStore((state) => state.getEmphasisPointsForRender);
+  // Text hook - rendered as timeline item if available, fallback to direct render otherwise
   const textHook = useTranscriptStore((state) => state.textHook);
+  // Check if text hook exists as a timeline item (id starts with "text-hook-")
+  const hasTextHookItem = Object.keys(trackItemsMap).some(id => id.startsWith("text-hook-"));
 
   // Audio + B-roll scenario handling
   const hasAudioBrollScenario = useTranscriptStore((state) => state.hasAudioBrollScenario);
@@ -43,6 +46,10 @@ const Composition = () => {
   const getBrollAssignments = useTranscriptStore((state) => state.getBrollAssignments);
   const getAudioSegments = useTranscriptStore((state) => state.getAudioSegments);
   const getVideoOnlyClips = useTranscriptStore((state) => state.getVideoOnlyClips);
+
+  // Background music
+  const getBackgroundMusicClips = useTranscriptStore((state) => state.getBackgroundMusicClips);
+  const getTotalDurationMs = useTranscriptStore((state) => state.getTotalDurationMs);
 
   // Get transcript-based render segments (now reactive to clips changes)
   const renderSegments = useMemo(() => getRenderSegments(), [clips, clipOrder, getRenderSegments]);
@@ -129,6 +136,11 @@ const Composition = () => {
   // Get emphasis points for zoom effects (AI-detected important moments)
   const emphasisPoints = useMemo(() => getEmphasisPointsForRender(), [emphasisPointsRaw, clips, clipOrder, getEmphasisPointsForRender]);
   const hasEmphasisPoints = emphasisPoints.length > 0;
+
+  // Get background music clips
+  const backgroundMusicClips = useMemo(() => getBackgroundMusicClips(), [clips, clipOrder, getBackgroundMusicClips]);
+  const totalDurationMs = useMemo(() => getTotalDurationMs(), [clips, clipOrder, getTotalDurationMs]);
+  const totalDurationFrames = Math.ceil((totalDurationMs / 1000) * fps);
 
   // Memoize groupTrackItems to avoid O(n²) calculation every frame
   const groupedItems = useMemo(() => groupTrackItems({
@@ -338,12 +350,19 @@ const Composition = () => {
       urlsToFetch.push(...mixedModeBrollAssignments.map(a => a.clipUrl));
     }
 
+    // Add background music URLs
+    if (backgroundMusicClips.length > 0) {
+      urlsToFetch.push(...backgroundMusicClips.map(m => m.url));
+    }
+
     if (urlsToFetch.length === 0) return;
 
     const uniqueUrls = [...new Set(urlsToFetch)];
+    const freedSet = new Set<string>();
+
     const prefetchers = uniqueUrls.map(url => {
       try {
-        return prefetch(url, { method: 'blob-url' });
+        return { url, handle: prefetch(url, { method: 'blob-url' }) };
       } catch {
         return null;
       }
@@ -351,14 +370,17 @@ const Composition = () => {
 
     return () => {
       prefetchers.forEach(p => {
-        try {
-          p?.free();
-        } catch {
-          // Already freed, ignore
+        if (p && !freedSet.has(p.url)) {
+          freedSet.add(p.url);
+          try {
+            p.handle.free();
+          } catch {
+            // Already freed or invalid - silently ignore
+          }
         }
       });
     };
-  }, [renderSegments, isAudioBrollMode, brollAssignments, audioSegments, mixedModeBrollAssignments]);
+  }, [renderSegments, isAudioBrollMode, brollAssignments, audioSegments, mixedModeBrollAssignments, backgroundMusicClips]);
 
   // Pre-calculate frame positions using cumulative approach to avoid rounding drift
   const segmentFrames = useMemo(
@@ -693,33 +715,67 @@ const Composition = () => {
         );
       })}
 
+      {/* Background music - each clip can be trimmed and positioned */}
+      {backgroundMusicClips.map((music, index) => {
+        // Calculate frames based on trim or full duration
+        const musicDurationMs = music.durationMs || totalDurationMs;
+        const trimStart = music.trim?.startMs ?? 0;
+        const trimEnd = music.trim?.endMs ?? musicDurationMs;
+        const trimmedDurationMs = trimEnd - trimStart;
+
+        // Music plays for its trimmed duration or until video ends
+        const effectiveDurationMs = Math.min(trimmedDurationMs, totalDurationMs);
+        const durationInFrames = Math.ceil((effectiveDurationMs / 1000) * fps);
+
+        // Audio start/end within the source file
+        const audioStartFrame = Math.floor((trimStart / 1000) * fps);
+        const audioEndFrame = Math.floor((trimEnd / 1000) * fps);
+
+        return (
+          <Sequence
+            key={`music-${music.clipId}-${index}`}
+            from={0}
+            durationInFrames={durationInFrames}
+          >
+            <Audio
+              src={music.url}
+              startFrom={audioStartFrame}
+              endAt={audioEndFrame}
+              volume={music.volume ?? 0.12}
+            />
+          </Sequence>
+        );
+      })}
+
       {/* Animated word-by-word captions with current word highlighting */}
+      {/* Emphasis points are passed for combo effect (extra pop on key moments) */}
       {captions.length > 0 && captionSettings.style !== "none" && (
         <AnimatedCaptions
           words={captions}
           windowSize={captionSettings.windowSize}
           style={captionSettings.animationType}
+          emphasisPoints={emphasisPoints}
         />
       )}
 
-      {/* Text hook rendered directly (bypasses DesignCombo animation system) */}
-      {textHook && (
+      {/* Text hook fallback - render directly if timeline item creation failed */}
+      {textHook && !hasTextHookItem && (
         <Sequence from={0} durationInFrames={Math.ceil((4000 / 1000) * fps)}>
           <AbsoluteFill style={{ pointerEvents: "none", zIndex: 10 }}>
             <div
               style={{
                 position: "absolute",
-                top: size.height * 0.05,
+                top: size.height * 0.06,
                 left: "50%",
                 transform: "translateX(-50%)",
-                width: size.width * 0.7,
+                width: size.width * 0.75,
                 backgroundColor: "#ffffff",
-                borderRadius: 16,
-                paddingTop: 32,
-                paddingBottom: 32,
-                paddingLeft: 24,
-                paddingRight: 24,
-                boxShadow: "0px 4px 12px rgba(0,0,0,0.12)",
+                borderRadius: 40,
+                paddingTop: 28,
+                paddingBottom: 28,
+                paddingLeft: 32,
+                paddingRight: 32,
+                boxShadow: "0px 4px 16px rgba(0,0,0,0.12)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -727,8 +783,8 @@ const Composition = () => {
             >
               <span
                 style={{
-                  fontFamily: "Arial, Helvetica, sans-serif",
-                  fontSize: 64,
+                  fontFamily: "Inter, Arial, Helvetica, sans-serif",
+                  fontSize: 56,
                   fontWeight: 900,
                   color: "#000000",
                   textAlign: "center",

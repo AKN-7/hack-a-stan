@@ -53,6 +53,12 @@ export const calculateTextStyles = (
   textAlign: details.textAlign || "left",
   color: details.color || "#000000",
   backgroundColor: details.backgroundColor || "transparent",
+  // Rounded corners and padding for text boxes
+  borderRadius: (details as any).borderRadius || 0,
+  paddingTop: (details as any).paddingTop || 0,
+  paddingBottom: (details as any).paddingBottom || 0,
+  paddingLeft: (details as any).paddingLeft || 0,
+  paddingRight: (details as any).paddingRight || 0,
 });
 
 export const calculateContainerStyles = (

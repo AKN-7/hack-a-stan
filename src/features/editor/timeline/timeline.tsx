@@ -1,5 +1,6 @@
 import Header from "./header";
 import TranscriptClipsTrack from "./transcript-clips-track";
+import MusicTrack from "./music-track";
 import OverlayTracks from "./overlay-tracks";
 import useTranscriptStore from "../store/use-transcript-store";
 import { Film } from "lucide-react";
@@ -37,6 +38,9 @@ const Timeline = () => {
                 <TranscriptClipsTrack />
               </div>
             </div>
+
+            {/* Music track - shows background music clips */}
+            <MusicTrack />
           </>
         ) : (
           <div className="h-full flex items-center justify-center px-4">
