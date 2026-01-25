@@ -64,10 +64,35 @@ export const useDownloadState = create<DownloadState>((set, get) => ({
         const emphasisPoints = transcriptStore.getEmphasisPointsForRender();
         const textHook = transcriptStore.textHook;
 
+        // Get background music clips
+        const backgroundMusicClips = transcriptStore.getBackgroundMusicClips();
+
+        // Get B-roll assignments if in audio+broll mode
+        const isAudioBrollMode = transcriptStore.hasAudioBrollScenario();
+        const brollAssignments = isAudioBrollMode ? transcriptStore.getBrollAssignments() : [];
+        const audioSegments = isAudioBrollMode ? transcriptStore.getAudioSegments() : [];
+
+        // Get per-clip transitions
+        const clipTransitions = transcriptStore.getTransitionsForRender();
+
         // Get transition and caption settings
         const effectsStore = useEffectsStore.getState();
         const transitionSettings = effectsStore.transitions;
         const captionSettings = effectsStore.captions;
+
+        // Debug: Log what we're sending
+        console.log('[Export] Data being sent:', {
+          segmentCount: renderSegments.length,
+          captionCount: captions.length,
+          emphasisPointCount: emphasisPoints.length,
+          textHook: !!textHook,
+          backgroundMusicCount: backgroundMusicClips.length,
+          brollCount: brollAssignments.length,
+          audioSegmentCount: audioSegments.length,
+          clipTransitionCount: clipTransitions.length,
+          transitionSettings,
+          captionSettings,
+        });
 
         // Step 1: POST request to start rendering
         const response = await fetch(`/api/render`, {
@@ -95,6 +120,13 @@ export const useDownloadState = create<DownloadState>((set, get) => ({
             emphasisPoints: emphasisPoints.length > 0 ? emphasisPoints : undefined,
             // Include text hook for rendering
             textHook: textHook || undefined,
+            // Include background music clips
+            backgroundMusicClips: backgroundMusicClips.length > 0 ? backgroundMusicClips : undefined,
+            // Include B-roll assignments for audio+broll mode
+            brollAssignments: brollAssignments.length > 0 ? brollAssignments : undefined,
+            audioSegments: audioSegments.length > 0 ? audioSegments : undefined,
+            // Include per-clip transitions
+            clipTransitions: clipTransitions.length > 0 ? clipTransitions : undefined,
           })
         });
 

@@ -37,10 +37,10 @@ const sora = Sora({
 
 export const metadata = createMetadata({
   title: {
-    template: "%s | Distill",
-    default: "Distill"
+    template: "%s | Waffles",
+    default: "Waffles"
   },
-  description: "AI Video generator for the next gen web.",
+  description: "You waffle on camera, we tighten it up.",
   metadataBase: baseUrl
 });
 

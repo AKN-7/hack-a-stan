@@ -90,6 +90,11 @@ export async function POST(request: Request) {
       captionSettings,
       emphasisPoints,
       textHook,
+      // New fields for full export support
+      backgroundMusicClips,
+      brollAssignments,
+      audioSegments,
+      clipTransitions,
     } = body;
 
     // Extract text overlays from design
@@ -103,6 +108,12 @@ export async function POST(request: Request) {
       firstSegment: transcriptSegments?.[0],
       fps: options?.fps,
       textOverlayCount: textOverlays.length,
+      captionCount: captions?.length || 0,
+      textHook: !!textHook,
+      backgroundMusicCount: backgroundMusicClips?.length || 0,
+      brollCount: brollAssignments?.length || 0,
+      audioSegmentCount: audioSegments?.length || 0,
+      clipTransitionCount: clipTransitions?.length || 0,
     });
 
     if (!FUNCTION_NAME || !SERVE_URL) {
@@ -150,6 +161,13 @@ export async function POST(request: Request) {
         emphasisPoints: emphasisPoints ?? [],
         // Text hook for rendering
         textHook: textHook || undefined,
+        // Background music clips
+        backgroundMusicClips: backgroundMusicClips ?? [],
+        // B-roll assignments for audio+broll mode
+        brollAssignments: brollAssignments ?? [],
+        audioSegments: audioSegments ?? [],
+        // Per-clip transitions
+        clipTransitions: clipTransitions ?? [],
       },
       // Override duration if using transcript segments
       ...(durationInFrames ? { durationInFrames } : {}),

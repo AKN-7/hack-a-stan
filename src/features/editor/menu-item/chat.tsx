@@ -40,13 +40,13 @@ import { ChevronDown, ChevronUp, Check, Undo2, Film, Type as TypeIcon } from "lu
 
 // Progress hints that rotate during AI analysis
 const PROGRESS_HINTS = [
-  "Finding filler words like 'um' and 'uh'...",
+  "Finding all the ums and ahs...",
+  "Spotting the waffle...",
   "Detecting duplicate takes...",
-  "Analyzing speech patterns...",
-  "Looking for stammering and false starts...",
-  "Optimizing clip order for narrative flow...",
-  "Generating attention-grabbing hook...",
-  "Calculating time savings...",
+  "Looking for false starts...",
+  "Getting the order just right...",
+  "Crafting your hook...",
+  "Making it golden crispy...",
 ];
 
 // Hook for rotating progress hints
@@ -542,10 +542,10 @@ export function Chat() {
             {/* Empty state */}
             {messages.length === 0 && !magicProcessingResult && !isProcessing && (
               <div className="text-center text-sm text-muted-foreground py-6 md:py-8">
-                <Sparkles className="h-7 w-7 md:h-8 md:w-8 mx-auto mb-2 md:mb-3 text-primary/50" />
-                <p className="font-medium mb-1 text-sm md:text-base">AI Video Editor</p>
+                <span className="text-3xl md:text-4xl block mb-2 md:mb-3">🧇</span>
+                <p className="font-medium mb-1 text-sm md:text-base">Your Waffle Chef</p>
                 <p className="text-xs">
-                  Ask me to edit your video, remove filler words, or generate B-roll.
+                  Ask me to cut the waffle, remove ums, or add some toppings.
                 </p>
               </div>
             )}
@@ -560,7 +560,7 @@ export function Chat() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
-                      <div className="text-sm font-semibold text-foreground">Magic Processing</div>
+                      <div className="text-sm font-semibold text-foreground">Cooking your waffles...</div>
                       <div className="text-xs font-medium text-primary tabular-nums">
                         {elapsedSeconds}s
                       </div>
@@ -573,7 +573,7 @@ export function Chat() {
                   {processingEvents.length === 0 ? (
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
                       <Loader2 className="h-3 w-3 animate-spin" />
-                      <span>Starting analysis...</span>
+                      <span>Heating up the griddle...</span>
                     </div>
                   ) : (
                     processingEvents.map((event, index) => {
@@ -997,8 +997,8 @@ function MagicProcessingSummary({ result, onDismiss }: { result: MagicProcessing
       {/* Hero Section - Time Saved */}
       <div className="px-4 pt-5 pb-4 text-center">
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-100 text-green-700 text-xs font-medium mb-3">
-          <Sparkles className="h-3.5 w-3.5" />
-          Magic Complete
+          <span className="text-sm">🧇</span>
+          Golden Crispy!
         </div>
 
         {/* Big Time Saved Number */}
@@ -1008,7 +1008,7 @@ function MagicProcessingSummary({ result, onDismiss }: { result: MagicProcessing
           </span>
         </div>
         <div className="text-sm text-green-700 font-medium mb-4">
-          saved from your video
+          of waffling cut!
         </div>
 
         {/* Stats Row */}
@@ -1016,7 +1016,7 @@ function MagicProcessingSummary({ result, onDismiss }: { result: MagicProcessing
           {totalCuts > 0 && (
             <div className="text-center">
               <div className="text-lg font-bold text-foreground">{totalCuts}</div>
-              <div className="text-xs text-muted-foreground">words cut</div>
+              <div className="text-xs text-muted-foreground">words waffled</div>
             </div>
           )}
           {result.clipsRemoved > 0 && (
@@ -1169,11 +1169,11 @@ function ToolCallCard({ toolCall }: { toolCall: ToolCall }) {
     let summary = "";
     if (result.message) summary = result.message as string;
     else if (result.deletedCount !== undefined) {
-      const timeSaved = result.timeSavedMs ? ` (saved ${((result.timeSavedMs as number) / 1000).toFixed(1)}s)` : "";
-      summary = `${result.deletedCount} words deleted${timeSaved}`;
+      const timeSaved = result.timeSavedMs ? ` (${((result.timeSavedMs as number) / 1000).toFixed(1)}s of waffle cut!)` : "";
+      summary = `${result.deletedCount} words waffled${timeSaved}`;
     }
     else if (result.removedCount !== undefined) {
-      const timeSaved = result.timeSavedMs ? ` (saved ${((result.timeSavedMs as number) / 1000).toFixed(1)}s)` : "";
+      const timeSaved = result.timeSavedMs ? ` (${((result.timeSavedMs as number) / 1000).toFixed(1)}s of waffle cut!)` : "";
       summary = `${result.removedCount} filler words removed${timeSaved}`;
     }
     else if (result.restoredCount !== undefined) summary = `${result.restoredCount} words restored`;

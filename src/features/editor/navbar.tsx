@@ -290,12 +290,27 @@ const DownloadPopover = ({ stateManager }: { stateManager: StateManager }) => {
   const [open, setOpen] = useState(false);
 
   const handleExport = () => {
+    // Get base data from stateManager
+    const baseData = stateManager.toJSON();
+
+    // Get LIVE Zustand state (this has the actual edited values from AI)
+    const liveState = useStore.getState();
+
+    // Merge: use live Zustand trackItemsMap/trackItemIds which have the actual edits
+    // The stateManager may have stale data if AI edited via direct Zustand updates
     const data: IDesign = {
       id: generateId(),
-      ...stateManager.toJSON()
+      ...baseData,
+      // Override with live Zustand state for items that AI may have edited
+      trackItemsMap: liveState.trackItemsMap,
+      trackItemIds: liveState.trackItemIds,
     };
 
-    console.log({ data });
+    console.log('[Export] Merged design payload:', {
+      stateManagerItems: Object.keys(baseData.trackItemsMap || {}),
+      liveZustandItems: Object.keys(liveState.trackItemsMap || {}),
+      finalItems: Object.keys(data.trackItemsMap || {})
+    });
 
     actions.setState({ payload: data });
     actions.startExport();

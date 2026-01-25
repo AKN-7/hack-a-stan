@@ -2604,12 +2604,12 @@ export async function executeToolCall(
         }
 
         // Show toast
-        toast.success(`Magic processing complete!`);
+        toast.success(`Golden crispy! Your waffle is ready 🧇`);
 
         return {
           success: true,
           result: {
-            message: `Magic processing complete! (${level} intensity)`,
+            message: `Waffle complete! (${level} intensity)`,
             intensity: level,
             actions: results,
             timeSavedMs: totalTimeSaved,

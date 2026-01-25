@@ -12,7 +12,7 @@ import { calculateSegmentFrames } from "../features/editor/utils/segment-frames"
 import { Captions, Caption } from "./Captions";
 import { AnimatedCaptions, WordCaption } from "./AnimatedCaptions";
 import { EmphasisZoom, EmphasisZoomPoint } from "./EmphasisZoom";
-import { TransitionSeries, linearTiming, fade } from "../features/editor/player/transitions";
+import { TransitionSeries, linearTiming, fade, slide, wipe } from "../features/editor/player/transitions";
 
 // Schema for render segments
 const renderSegmentSchema = z.object({
@@ -89,6 +89,49 @@ const emphasisPointSchema = z.object({
   reason: z.string(),
 });
 
+// Schema for background music clips
+const backgroundMusicSchema = z.object({
+  clipId: z.string(),
+  url: z.string(),
+  volume: z.number().optional(),
+  durationMs: z.number().optional(),
+  trim: z.object({
+    startMs: z.number(),
+    endMs: z.number(),
+  }).optional(),
+});
+
+// Schema for B-roll assignments
+const brollAssignmentSchema = z.object({
+  clipId: z.string(),
+  clipUrl: z.string(),
+  startMs: z.number(),
+  endMs: z.number(),
+  durationMs: z.number(),
+  timelineStartMs: z.number(),
+  timelineEndMs: z.number(),
+});
+
+// Schema for audio segments (for audio+broll mode)
+const audioSegmentSchema = z.object({
+  clipId: z.string(),
+  clipUrl: z.string(),
+  startMs: z.number(),
+  endMs: z.number(),
+  durationMs: z.number(),
+  offsetMs: z.number(),
+  volume: z.number().optional(),
+});
+
+// Schema for per-clip transitions
+const clipTransitionSchema = z.object({
+  fromClipId: z.string(),
+  toClipId: z.string(),
+  type: z.enum(["fade", "slide", "wipe", "flip", "clockWipe", "circle", "star", "rectangle", "none"]),
+  durationMs: z.number(),
+  direction: z.string().optional(),
+});
+
 // Schema for the TranscriptVideo composition
 export const transcriptVideoSchema = z.object({
   segments: z.array(renderSegmentSchema),
@@ -99,6 +142,11 @@ export const transcriptVideoSchema = z.object({
   captionSettings: captionSettingsSchema.optional(),
   emphasisPoints: z.array(emphasisPointSchema).optional(),
   textHook: z.string().optional(),
+  // New props for full export support
+  backgroundMusicClips: z.array(backgroundMusicSchema).optional(),
+  brollAssignments: z.array(brollAssignmentSchema).optional(),
+  audioSegments: z.array(audioSegmentSchema).optional(),
+  clipTransitions: z.array(clipTransitionSchema).optional(),
 });
 
 export type TranscriptVideoProps = z.infer<typeof transcriptVideoSchema>;
@@ -226,14 +274,39 @@ const TextHookOverlay: React.FC<{ text: string; fps: number }> = ({ text, fps })
  */
 export const TranscriptVideo: React.FC<TranscriptVideoProps> = ({
   segments,
+  durationMs,
   captions = [],
   textOverlays = [],
   transitionSettings,
   captionSettings,
   emphasisPoints = [],
   textHook,
+  backgroundMusicClips = [],
+  brollAssignments = [],
+  audioSegments = [],
+  clipTransitions = [],
 }) => {
   const { fps } = useVideoConfig();
+
+  // Calculate total duration frames for background music
+  const totalDurationFrames = Math.ceil((durationMs / 1000) * fps);
+
+  // Check if we're in audio+broll mode
+  const isAudioBrollMode = brollAssignments.length > 0 && audioSegments.length > 0;
+
+  // Helper to get transition presentation based on type
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const getTransitionPresentation = (type: string, direction?: string): any => {
+    switch (type) {
+      case "slide":
+        return slide({ direction: (direction as any) || "from-left" });
+      case "wipe":
+        return wipe({ direction: (direction as any) || "from-left" });
+      case "fade":
+      default:
+        return fade();
+    }
+  };
 
   if (!segments || segments.length === 0) {
     return (
@@ -309,11 +382,24 @@ export const TranscriptVideo: React.FC<TranscriptVideoProps> = ({
 
             // Add transition after each segment except the last
             if (index < segmentFrames.length - 1) {
+              // Check for per-clip transition
+              const nextSegment = segmentFrames[index + 1]?.segment;
+              const perClipTransition = nextSegment
+                ? clipTransitions.find(t => t.fromClipId === segment.clipId && t.toClipId === nextSegment.clipId)
+                : null;
+
+              // Use per-clip transition if available, otherwise use global transition settings
+              const effectiveTransitionFrames = perClipTransition
+                ? Math.round((perClipTransition.durationMs / 1000) * fps)
+                : transitionFrames;
+              const transitionType = perClipTransition?.type || transitionSettings?.type || "fade";
+              const transitionDirection = perClipTransition?.direction;
+
               elements.push(
                 <TransitionSeries.Transition
                   key={`trans-${index}`}
-                  presentation={fade()}
-                  timing={linearTiming({ durationInFrames: transitionFrames })}
+                  presentation={getTransitionPresentation(transitionType, transitionDirection)}
+                  timing={linearTiming({ durationInFrames: effectiveTransitionFrames })}
                 />
               );
             }
@@ -403,6 +489,91 @@ export const TranscriptVideo: React.FC<TranscriptVideoProps> = ({
       {textHook && (
         <TextHookOverlay text={textHook} fps={fps} />
       )}
+
+      {/* Background music - plays for duration of video */}
+      {backgroundMusicClips.length > 0 && backgroundMusicClips.map((music, index) => {
+        const musicDurationMs = music.durationMs || durationMs;
+        const trimStart = music.trim?.startMs ?? 0;
+        const trimEnd = music.trim?.endMs ?? musicDurationMs;
+        const trimmedDurationMs = trimEnd - trimStart;
+
+        // Music plays for its trimmed duration or until video ends
+        const effectiveDurationMs = Math.min(trimmedDurationMs, durationMs);
+        const musicDurationInFrames = Math.ceil((effectiveDurationMs / 1000) * fps);
+
+        // Audio start/end within the source file
+        const audioStartFrame = Math.floor((trimStart / 1000) * fps);
+        const audioEndFrame = Math.floor((trimEnd / 1000) * fps);
+
+        return (
+          <Sequence
+            key={`music-${music.clipId}-${index}`}
+            from={0}
+            durationInFrames={musicDurationInFrames}
+          >
+            <Audio
+              src={music.url}
+              startFrom={audioStartFrame}
+              endAt={audioEndFrame}
+              volume={music.volume ?? 0.12}
+            />
+          </Sequence>
+        );
+      })}
+
+      {/* B-roll video rendering for audio+broll mode */}
+      {isAudioBrollMode && brollAssignments.map((assignment, index) => {
+        const startFrame = Math.floor((assignment.timelineStartMs / 1000) * fps);
+        const brollDurationInFrames = Math.ceil((assignment.durationMs / 1000) * fps);
+        const videoStartFrame = Math.floor((assignment.startMs / 1000) * fps);
+        const videoEndFrame = Math.floor((assignment.endMs / 1000) * fps);
+
+        return (
+          <Sequence
+            key={`broll-${assignment.clipId}-${index}`}
+            from={startFrame}
+            durationInFrames={brollDurationInFrames}
+          >
+            <AbsoluteFill style={{ overflow: "hidden" }}>
+              <OffthreadVideo
+                src={assignment.clipUrl}
+                startFrom={videoStartFrame}
+                endAt={videoEndFrame}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  transform: "scale(1.05)",
+                }}
+                muted
+              />
+            </AbsoluteFill>
+          </Sequence>
+        );
+      })}
+
+      {/* Audio track for audio+broll mode */}
+      {isAudioBrollMode && audioSegments.map((segment, index) => {
+        const startFrame = Math.floor((segment.offsetMs / 1000) * fps);
+        const audioDurationInFrames = Math.ceil((segment.durationMs / 1000) * fps);
+        const audioStartFrame = Math.floor((segment.startMs / 1000) * fps);
+        const audioEndFrame = Math.floor((segment.endMs / 1000) * fps);
+
+        return (
+          <Sequence
+            key={`audio-${segment.clipId}-${index}`}
+            from={startFrame}
+            durationInFrames={audioDurationInFrames}
+          >
+            <Audio
+              src={segment.clipUrl}
+              startFrom={audioStartFrame}
+              endAt={audioEndFrame}
+              volume={segment.volume ?? 1}
+            />
+          </Sequence>
+        );
+      })}
     </AbsoluteFill>
   );
 };

@@ -522,7 +522,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
         return sections;
       },
 
-      // Reorder sections - rebuilds sentenceOrder based on new section order
+      // Reorder sections - rebuilds sentenceOrder AND clipOrder based on new section order
       reorderSections: (newSectionOrder: string[]) => {
         get()._pushHistory();
 
@@ -531,15 +531,24 @@ const useTranscriptStore = create<ITranscriptStore>()(
 
         // Build new sentence order from section order
         const newSentenceOrder: string[] = [];
+        // Also track clip order derived from sections
+        const seenClipIds = new Set<string>();
+        const derivedClipOrder: string[] = [];
+
         for (const sectionId of newSectionOrder) {
           const section = sectionMap.get(sectionId);
           if (section) {
             newSentenceOrder.push(...section.sentenceIds);
+            // Track the source clip for this section
+            if (!seenClipIds.has(section.sourceClipId)) {
+              seenClipIds.add(section.sourceClipId);
+              derivedClipOrder.push(section.sourceClipId);
+            }
           }
         }
 
         // Add any deleted sentences at the end (so they can be restored)
-        const { sentences, sentenceOrder } = get();
+        const { sentences, sentenceOrder, clips, clipOrder } = get();
         for (const sentenceId of sentenceOrder) {
           const sentence = sentences[sentenceId];
           if (sentence?.isDeleted && !newSentenceOrder.includes(sentenceId)) {
@@ -547,7 +556,14 @@ const useTranscriptStore = create<ITranscriptStore>()(
           }
         }
 
-        set({ sentenceOrder: newSentenceOrder });
+        // Add any clips not in sections (deleted clips, B-roll, background music, etc.)
+        const otherClips = clipOrder.filter(id => {
+          const clip = clips[id];
+          return clip && !seenClipIds.has(id);
+        });
+        const newClipOrder = [...derivedClipOrder, ...otherClips];
+
+        set({ sentenceOrder: newSentenceOrder, clipOrder: newClipOrder });
       },
 
       gapThresholdMs: 200, // Balanced - cuts gaps >200ms without being too aggressive

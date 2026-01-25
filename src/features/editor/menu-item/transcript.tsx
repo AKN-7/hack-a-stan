@@ -137,7 +137,7 @@ const ClipItem = ({
           Clip {index + 1}
           {isClipDeleted && (
             <span className="ml-1 md:ml-2 text-xs font-normal text-red-500 no-underline">
-              (removed)
+              (waffled)
             </span>
           )}
         </span>
@@ -889,10 +889,10 @@ export const Transcript = () => {
                   <ChevronRight className="w-4 h-4 text-muted-foreground" />
                 )}
                 <span className="text-sm font-medium text-muted-foreground">
-                  Removed content
+                  Waffled content
                 </span>
                 <span className="text-xs text-muted-foreground/70 ml-1">
-                  ({removedClips.length} clips, {removedSentences.length} sentences)
+                  ({removedClips.length} clips, {removedSentences.length} cuts)
                 </span>
               </button>
 
@@ -960,7 +960,7 @@ export const Transcript = () => {
                             )}>
                               Sentence
                             </span>
-                            <span className="text-xs text-amber-600 font-medium">Cut</span>
+                            <span className="text-xs text-amber-600 font-medium">Waffled</span>
                           </div>
                           <p className="text-xs text-muted-foreground line-through">
                             {sentence.text}
@@ -1118,7 +1118,7 @@ export const Transcript = () => {
                   onClick={handleDeleteSelected}
                 >
                   <Scissors className="w-3.5 h-3.5 mr-1.5" />
-                  Cut
+                  Waffle it
                 </button>
               )}
               <button
@@ -1150,7 +1150,7 @@ export const Transcript = () => {
             <div className="flex items-center gap-3 text-muted-foreground">
               <span>{unifiedTranscript.filter((w) => !w.isDeleted).length} words</span>
               {unifiedTranscript.filter((w) => w.isDeleted).length > 0 && (
-                <span className="text-red-500">{unifiedTranscript.filter((w) => w.isDeleted).length} cut</span>
+                <span className="text-red-500">{unifiedTranscript.filter((w) => w.isDeleted).length} waffled</span>
               )}
             </div>
             <div className="flex items-center gap-1.5 text-primary font-medium">

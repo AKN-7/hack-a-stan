@@ -230,9 +230,10 @@ const UploadLanding = () => {
       {/* Main content */}
       <div className="relative z-10 flex flex-col items-center justify-center gap-6 md:gap-8 p-4 md:p-8 max-w-2xl text-center w-full">
         {/* Logo/Brand area */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          <span className="text-4xl md:text-6xl" role="img" aria-label="waffle">🧇</span>
           <span className="text-5xl md:text-7xl font-bold tracking-tight text-primary" style={{ fontFamily: 'var(--font-sora), sans-serif' }}>
-            Distill
+            Waffles
           </span>
         </div>
 
@@ -242,14 +243,14 @@ const UploadLanding = () => {
             <div className="space-y-2">
               <h1 className="text-2xl font-bold text-primary">
                 {isStaging
-                  ? `${uploadsWithThumbnails.length} file${uploadsWithThumbnails.length > 1 ? "s" : ""} selected`
-                  : `Uploading ${uploadsWithThumbnails.length} file${uploadsWithThumbnails.length > 1 ? "s" : ""}`
+                  ? `${uploadsWithThumbnails.length} clip${uploadsWithThumbnails.length > 1 ? "s" : ""} in the batter`
+                  : `Cooking ${uploadsWithThumbnails.length} clip${uploadsWithThumbnails.length > 1 ? "s" : ""}...`
                 }
               </h1>
               <p className="font-semibold text-foreground">
                 {isStaging
-                  ? "Review your clips, then hit Go"
-                  : "Your media will be transcribed automatically"
+                  ? "Review your clips, then let's cook"
+                  : "Getting your waffles golden crispy"
                 }
               </p>
             </div>
@@ -396,10 +397,10 @@ const UploadLanding = () => {
               {/* Text */}
               <div className="space-y-1 md:space-y-2">
                 <h1 className="text-lg md:text-xl font-bold text-foreground">
-                  {isDragging ? "Drop your files" : "Tap to upload media"}
+                  {isDragging ? "Drop it like it's hot!" : "Drop your waffling"}
                 </h1>
                 <p className="text-sm font-semibold text-primary">
-                  or drag and drop
+                  we'll tighten it up
                 </p>
               </div>
               
@@ -412,9 +413,9 @@ const UploadLanding = () => {
             {/* Feature pills */}
             <div className="flex flex-wrap items-center justify-center gap-2 md:gap-3 px-2">
               {[
-                "Auto-removes filler words",
-                "Removes stammering",
-                "Smart ordering",
+                "Cuts the waffle",
+                "Removes ums & ahs",
+                "Golden crispy edits",
                 "Instant transcription",
               ].map((feature) => (
                 <span
