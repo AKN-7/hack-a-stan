@@ -772,17 +772,176 @@ Return ONLY valid JSON.`;
 }
 
 // ============================================================================
+// PASS 5: AI Transition Selection
+// ============================================================================
+
+interface TransitionPair {
+  fromClipId: string;
+  toClipId: string;
+  fromText: string;  // Brief excerpt for context
+  toText: string;    // Brief excerpt for context
+}
+
+async function runPass5(transitionPairs: TransitionPair[]) {
+  console.log("\n" + "=".repeat(80));
+  console.log("[PASS 5 - AI TRANSITION SELECTION] INPUT");
+  console.log("=".repeat(80));
+  console.log(`Transition points to analyze: ${transitionPairs.length}`);
+  transitionPairs.forEach((pair, i) => {
+    console.log(`\n--- Transition ${i + 1}: ${pair.fromClipId} → ${pair.toClipId} ---`);
+    console.log(`  From: "${pair.fromText.substring(0, 80)}${pair.fromText.length > 80 ? '...' : ''}"`);
+    console.log(`  To: "${pair.toText.substring(0, 80)}${pair.toText.length > 80 ? '...' : ''}"`);
+  });
+
+  const pairsContext = transitionPairs.map((pair, i) =>
+    `[${i + 1}] ${pair.fromClipId} → ${pair.toClipId}
+FROM: "${pair.fromText}"
+TO: "${pair.toText}"`
+  ).join("\n\n");
+
+  const systemPrompt = `You are selecting transitions between video clips for a short-form video (TikTok, Reels, Shorts).
+
+AVAILABLE TRANSITIONS:
+1. "none" - Hard cut. Best for: same topic continuation, conversational flow, fast pacing
+2. "fade" - Crossfade. Best for: topic changes, mood shifts, time passage, reflective moments
+3. "slide" (with direction) - Content slides in. Best for: introducing new sections, energetic transitions
+4. "wipe" (with direction) - Clean wipe reveal. Best for: dramatic reveals, topic pivots
+5. "flip" - 3D flip effect. Best for: surprising content, before/after reveals
+6. "clockWipe" - Circular clock wipe. Best for: time-related transitions
+7. "circle" / "star" / "rectangle" - Shape reveals. Best for: playful content, emphasis
+
+DIRECTIONS (for slide/wipe):
+- "from-left", "from-right" - Horizontal movement
+- "from-top", "from-bottom" - Vertical movement
+
+DECISION RULES:
+1. **Same topic, continuous thought** → "none" (hard cut)
+   - "I went to the store" → "And I bought this thing" = hard cut (same story)
+
+2. **Topic change or new section** → "fade" (smooth handoff)
+   - "That's my morning routine" → "Now let me show you my workspace" = fade
+
+3. **Big reveal or surprise** → "wipe" or shape transition
+   - Building tension → Revealing the thing = wipe from-bottom
+
+4. **High energy, quick pacing** → "none" or short "slide"
+   - Fast-paced content benefits from hard cuts
+
+5. **Emotional shift** → "fade"
+   - Happy → Serious = fade to signal tone change
+
+DEFAULT: When in doubt, use "none" (hard cut). Short-form content works best with crisp cuts.
+Keep durations short: 300-500ms for most transitions.`;
+
+  const userPrompt = `Here are ${transitionPairs.length} transition points in the video:
+
+${pairsContext}
+
+For each transition, decide:
+1. What type of transition fits the content relationship?
+2. What duration (300-700ms typical)?
+3. What direction if applicable?
+
+Return JSON:
+{
+  "transitions": [
+    {
+      "fromClipId": "clip-id-1",
+      "toClipId": "clip-id-2",
+      "type": "fade",  // none, fade, slide, wipe, flip, clockWipe, circle, star, rectangle
+      "direction": null,  // from-left, from-right, from-top, from-bottom (for slide/wipe only)
+      "durationMs": 400,
+      "reason": "Brief reason for this choice"
+    }
+  ],
+  "overallStyle": "Description of the transition style applied (e.g., 'mostly hard cuts for fast pacing with fades at topic changes')"
+}
+
+Use the EXACT clipId values provided.
+Return ONLY valid JSON.`;
+
+  const response = await anthropic.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 4096,
+    temperature: 0.3,  // Slight creativity for varied choices
+    system: systemPrompt,
+    messages: [{ role: "user", content: userPrompt }],
+  });
+
+  const responseText = response.content
+    .filter((block): block is Anthropic.TextBlock => block.type === "text")
+    .map(block => block.text)
+    .join("");
+
+  console.log("\n" + "-".repeat(80));
+  console.log("[PASS 5] FULL RAW RESPONSE:");
+  console.log("-".repeat(80));
+  console.log(responseText);
+  console.log("-".repeat(80));
+
+  let result = {
+    transitions: [] as Array<{
+      fromClipId: string;
+      toClipId: string;
+      type: string;
+      direction?: string;
+      durationMs: number;
+      reason: string;
+    }>,
+    overallStyle: "",
+  };
+
+  try {
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      result = {
+        transitions: parsed.transitions || [],
+        overallStyle: parsed.overallStyle || "",
+      };
+    }
+  } catch (parseError) {
+    console.error("[Pass 5] Failed to parse:", parseError);
+    // Fallback: no transitions (all hard cuts)
+  }
+
+  // Validate transition types
+  const validTypes = ["none", "fade", "slide", "wipe", "flip", "clockWipe", "circle", "star", "rectangle"];
+  const validDirections = ["from-left", "from-right", "from-top", "from-bottom"];
+
+  result.transitions = result.transitions.map(t => ({
+    ...t,
+    type: validTypes.includes(t.type) ? t.type : "none",
+    direction: t.direction && validDirections.includes(t.direction) ? t.direction : undefined,
+    durationMs: Math.min(Math.max(t.durationMs || 400, 100), 2000),  // Clamp 100-2000ms
+  }));
+
+  console.log("\n[PASS 5] PARSED RESULT:");
+  console.log(`Overall style: "${result.overallStyle}"`);
+  console.log(`\nTransitions (${result.transitions.length}):`);
+  result.transitions.forEach((t, i) => {
+    console.log(`  ${i + 1}. ${t.fromClipId} → ${t.toClipId}`);
+    console.log(`     Type: ${t.type}${t.direction ? ` (${t.direction})` : ''}, Duration: ${t.durationMs}ms`);
+    console.log(`     Reason: ${t.reason}`);
+  });
+  console.log("=".repeat(80) + "\n");
+
+  return result;
+}
+
+// ============================================================================
 // MAIN HANDLER
 // ============================================================================
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { clips, sentences, pass, understanding } = body as {
+    const { clips, sentences, pass, understanding, transitionPairs } = body as {
       clips?: ClipTranscript[];
       sentences?: SentenceData[];
       pass?: number;
       understanding?: string;
+      transitionPairs?: TransitionPair[];
     };
 
     console.log("\n" + "#".repeat(80));
@@ -844,6 +1003,25 @@ export async function POST(request: NextRequest) {
         return Response.json({
           success: true,
           pass: 4,
+          ...result,
+        });
+      }
+
+      case 5: {
+        // Pass 5: AI transition selection
+        const transitionPairs = body.transitionPairs as TransitionPair[] | undefined;
+        if (!transitionPairs || transitionPairs.length === 0) {
+          return Response.json({
+            success: true,
+            pass: 5,
+            transitions: [],
+            overallStyle: "No transition points provided",
+          });
+        }
+        const result = await runPass5(transitionPairs);
+        return Response.json({
+          success: true,
+          pass: 5,
           ...result,
         });
       }

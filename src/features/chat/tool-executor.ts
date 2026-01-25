@@ -2561,6 +2561,12 @@ export async function executeToolCall(
           results.push(`${transcriptStore.clipOrder.length} clips ready for AI reordering - call smart_reorder_clips to optimize flow`);
         }
 
+        // 8. Auto-enhance audio (non-blocking - runs in background)
+        const enhancementCount = await transcriptStore.startEnhancementForAllClips();
+        if (enhancementCount > 0) {
+          results.push(`Audio enhancement started for ${enhancementCount} clip(s) (noise reduction + loudness normalization)`);
+        }
+
         // Show toast
         toast.success(`Magic processing complete!`);
 
@@ -2575,6 +2581,9 @@ export async function executeToolCall(
             originalDurationMs: durationBefore,
             newDurationMs: durationAfter,
             clipCount: transcriptStore.clipOrder.length,
+            audioEnhancement: enhancementCount > 0
+              ? { status: "processing", clipsEnhancing: enhancementCount }
+              : { status: "skipped", reason: "No clips need enhancement" },
             suggestion: reorderClips !== false && transcriptStore.clipOrder.length > 1
               ? "Consider calling smart_reorder_clips to optimize clip order based on content"
               : undefined,

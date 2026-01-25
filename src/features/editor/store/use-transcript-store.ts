@@ -343,6 +343,7 @@ interface ITranscriptStore {
 
   // Voice Enhancement actions
   startEnhancement: (clipId: string) => Promise<void>;
+  startEnhancementForAllClips: () => Promise<number>; // Returns number of clips started
   pollEnhancementStatus: (clipId: string, jobId: string) => Promise<void>;
   setEnhancementStatus: (clipId: string, status: ClipTranscript["enhancementStatus"], data?: Partial<ClipTranscript>) => void;
   toggleEnhancedAudio: (clipId: string) => void;
@@ -1438,6 +1439,53 @@ const useTranscriptStore = create<ITranscriptStore>()(
             },
           }));
         }
+      },
+
+      // Voice Enhancement - Start enhancement for ALL clips (non-blocking)
+      startEnhancementForAllClips: async () => {
+        const { clips, clipOrder } = get();
+        let startedCount = 0;
+
+        // Filter clips that have audio and haven't been enhanced yet
+        const clipsToEnhance = clipOrder.filter((clipId) => {
+          const clip = clips[clipId];
+          if (!clip || !clip.url) return false;
+          // Skip if already processing, completed, or pending
+          if (clip.enhancementStatus === "processing" ||
+              clip.enhancementStatus === "completed" ||
+              clip.enhancementStatus === "pending") {
+            return false;
+          }
+          // Only enhance clips with audio (not video_only)
+          if (clip.clipType === "video_only") return false;
+          return true;
+        });
+
+        if (clipsToEnhance.length === 0) {
+          console.log("[Enhancement] No clips need enhancement");
+          return 0;
+        }
+
+        console.log(`[Enhancement] Starting enhancement for ${clipsToEnhance.length} clip(s)`);
+
+        // Start enhancement for each clip (fire and forget - polling handles the rest)
+        for (const clipId of clipsToEnhance) {
+          try {
+            // Don't await - let them run in parallel
+            get().startEnhancement(clipId);
+            startedCount++;
+          } catch (error) {
+            console.error(`[Enhancement] Failed to start for clip ${clipId}:`, error);
+          }
+        }
+
+        if (startedCount > 0) {
+          toast.success(`Enhancing audio for ${startedCount} clip(s)...`, {
+            description: "Noise reduction & loudness normalization in progress",
+          });
+        }
+
+        return startedCount;
       },
 
       // Voice Enhancement - Poll for enhancement status
@@ -2821,6 +2869,109 @@ const useTranscriptStore = create<ITranscriptStore>()(
               }
             }
 
+            // ==================== PASS 5: AI Transition Selection ====================
+            // Build transition pairs from consecutive clips in the final order
+            const { setTransition } = get();
+            const finalClipOrder = aiSuggestedSentenceOrder
+              ? (() => {
+                  // Derive clip order from sentence order
+                  const seenClips = new Set<string>();
+                  const order: string[] = [];
+                  for (const sentId of aiSuggestedSentenceOrder) {
+                    const sentence = sentenceMap[sentId];
+                    if (sentence && !seenClips.has(sentence.clipId)) {
+                      seenClips.add(sentence.clipId);
+                      order.push(sentence.clipId);
+                    }
+                  }
+                  return order;
+                })()
+              : (pass2Result?.suggestedOrder || clipOrder.filter(id => !removedClipIds.includes(id)));
+
+            // Only run if we have at least 2 clips for transitions
+            if (finalClipOrder.length >= 2) {
+              set({ processingStatus: "Selecting transitions..." });
+              addProcessingEvent("pass_start", "Pass 5: AI transition selection");
+
+              // Build transition pairs with context
+              const transitionPairs: Array<{
+                fromClipId: string;
+                toClipId: string;
+                fromText: string;
+                toText: string;
+              }> = [];
+
+              for (let i = 0; i < finalClipOrder.length - 1; i++) {
+                const fromClipId = finalClipOrder[i];
+                const toClipId = finalClipOrder[i + 1];
+                const fromClip = clips[fromClipId];
+                const toClip = clips[toClipId];
+
+                if (fromClip && toClip) {
+                  // Get last ~50 words from "from" clip and first ~50 words from "to" clip for context
+                  const fromWords = fromClip.words.filter(w => !w.isDeleted);
+                  const toWords = toClip.words.filter(w => !w.isDeleted);
+                  const fromText = fromWords.slice(-50).map(w => w.text).join(" ");
+                  const toText = toWords.slice(0, 50).map(w => w.text).join(" ");
+
+                  transitionPairs.push({ fromClipId, toClipId, fromText, toText });
+                }
+              }
+
+              if (transitionPairs.length > 0) {
+                try {
+                  const pass5Response = await fetch("/api/analyze-cuts", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      transitionPairs,
+                      pass: 5,
+                    }),
+                  });
+
+                  if (pass5Response.ok) {
+                    const pass5Result = await pass5Response.json();
+                    console.log("[Auto-Magic] Pass 5 result:", {
+                      transitionsCount: pass5Result.transitions?.length || 0,
+                      overallStyle: pass5Result.overallStyle?.substring(0, 80),
+                    });
+
+                    // Apply transitions
+                    if (pass5Result.transitions && pass5Result.transitions.length > 0) {
+                      let transitionsApplied = 0;
+                      for (const t of pass5Result.transitions) {
+                        if (t.type && t.type !== "none") {
+                          setTransition(
+                            t.fromClipId,
+                            t.toClipId,
+                            t.type,
+                            t.durationMs || 400,
+                            t.direction || undefined
+                          );
+                          transitionsApplied++;
+                          console.log(`[Auto-Magic] Applied ${t.type} transition: ${t.fromClipId} → ${t.toClipId}`);
+                        }
+                      }
+
+                      if (transitionsApplied > 0) {
+                        addProcessingEvent("pass_complete", `Applied ${transitionsApplied} transitions`, pass5Result.overallStyle?.substring(0, 60));
+                      } else {
+                        addProcessingEvent("pass_complete", "Pass 5 complete", "Using hard cuts for fast pacing");
+                      }
+                    } else {
+                      addProcessingEvent("pass_complete", "Pass 5 complete", "No transitions needed");
+                    }
+                  } else {
+                    console.warn("[Auto-Magic] Pass 5 failed, continuing without AI transitions");
+                    addProcessingEvent("pass_complete", "Pass 5 skipped");
+                  }
+                } catch (pass5Error) {
+                  console.warn("[Auto-Magic] Pass 5 error:", pass5Error);
+                  addProcessingEvent("pass_complete", "Pass 5 skipped", "Error selecting transitions");
+                }
+              }
+            }
+
             addProcessingEvent("pass_complete", "AI analysis complete!");
 
           } catch (aiError) {
@@ -2832,9 +2983,9 @@ const useTranscriptStore = create<ITranscriptStore>()(
           set({ processingStatus: "Optimizing pacing...", processingStep: 3 });
           setGapThreshold(200); // Balanced - gaps >200ms get cut
 
-          // Step 4: Transitions disabled - natural cuts with gap merging work better
-          // The minimum segment duration (600ms) and gap threshold (200ms)
-          // already create smooth, professional-feeling cuts without visible fades
+          // Step 4: Transitions are now handled by Pass 5 (AI Transition Selection)
+          // AI analyzes content relationships and applies appropriate transitions
+          // (fade for topic changes, hard cuts for continuations, etc.)
 
           // Step 5: Apply AI-suggested clip order
           // When using sentence ordering, derive clip order from sentence order (first appearance)

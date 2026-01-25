@@ -346,6 +346,9 @@ const TranscriptClipsTrack = ({ totalDurationMs }: TranscriptClipsTrackProps) =>
         const clipData = clips[block.clipId];
         const style = getClipStyle(clipData?.colorIndex ?? getStableColorIndex(block.clipId));
 
+        // Audio enhancement status (shimmer while processing)
+        const isEnhancing = clipData?.enhancementStatus === "processing" || clipData?.enhancementStatus === "pending";
+
         // Check for transition to next clip
         const nextBlock = clipBlocks[index + 1];
         const transition = nextBlock ? getTransitionBetween(block.clipId, nextBlock.clipId) : null;
@@ -370,7 +373,8 @@ const TranscriptClipsTrack = ({ totalDurationMs }: TranscriptClipsTrackProps) =>
                 ? cn("bg-gradient-to-r", style.gradient, "ring-2 ring-white/80")
                 : cn("bg-gradient-to-r", style.gradient, "hover:scale-[1.02] hover:brightness-105"),
               isDropTarget && "ring-2 ring-primary ring-offset-2 ring-offset-background",
-              isSelected && "ring-2 ring-primary ring-offset-2 ring-offset-background shadow-lg"
+              isSelected && "ring-2 ring-primary ring-offset-2 ring-offset-background shadow-lg",
+              isEnhancing && "audio-enhancing"
             )}
             style={{
               width: `${Math.max(5, widthPercent)}%`,
