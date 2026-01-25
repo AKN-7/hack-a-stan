@@ -9,7 +9,6 @@ import { calculateSegmentFrames } from "../utils/segment-frames";
 import { AbsoluteFill, Sequence, Video, useCurrentFrame, prefetch } from "remotion";
 import useStore from "../store/use-store";
 import useTranscriptStore from "../store/use-transcript-store";
-import useEffectsStore from "../store/use-effects-store";
 
 const Composition = () => {
   const [editableTextId, setEditableTextId] = useState<string | null>(null);
@@ -31,9 +30,6 @@ const Composition = () => {
   const getRenderSegments = useTranscriptStore((state) => state.getRenderSegments);
   const getCaptionsForRender = useTranscriptStore((state) => state.getCaptionsForRender);
 
-  // Subscribe to effects store for zoom/transition settings
-  const segmentZoom = useEffectsStore((state) => state.segmentZoom);
-
   // Get transcript-based render segments (now reactive to clips changes)
   const renderSegments = useMemo(() => getRenderSegments(), [clips, clipOrder, getRenderSegments]);
   const hasTranscriptData = renderSegments.length > 0;
@@ -44,30 +40,35 @@ const Composition = () => {
   // Calculate current time in the edited (transcript-driven) timeline
   const currentTimeMs = (frame / fps) * 1000;
 
-  // Find current caption based on time
+  // Find current caption based on time - use stable reference to avoid recalc every frame
+  // Binary search would be better for large caption arrays, but this is O(n) with early exit
   const currentCaption = useMemo(() => {
-    for (const caption of captions) {
+    // Only recalculate when captions array changes, not every frame
+    // Return a function that can be called with currentTimeMs
+    return captions;
+  }, [captions]);
+
+  // Lookup current caption without causing re-render on every frame
+  const activeCaption = (() => {
+    for (const caption of currentCaption) {
       if (currentTimeMs >= caption.startMs && currentTimeMs < caption.endMs) {
         return caption;
       }
     }
     return null;
-  }, [captions, currentTimeMs]);
+  })();
 
-  // Debug: Log trackItemIds to see if images are included
-  const imageIdsInTrackItemIds = trackItemIds.filter(id => trackItemsMap[id]?.type === "image");
-  if (imageIdsInTrackItemIds.length > 0) {
-    console.log(`[Composition] trackItemIds contains ${imageIdsInTrackItemIds.length} image ID(s):`, imageIdsInTrackItemIds);
-  }
-
-  const groupedItems = groupTrackItems({
+  // Memoize groupTrackItems to avoid O(n²) calculation every frame
+  const groupedItems = useMemo(() => groupTrackItems({
     trackItemIds,
     transitionsMap,
     trackItemsMap: trackItemsMap
-  });
-  const mediaItems = Object.values(trackItemsMap).filter((item) => {
+  }), [trackItemIds, transitionsMap, trackItemsMap]);
+
+  // Memoize media items filtering
+  const mediaItems = useMemo(() => Object.values(trackItemsMap).filter((item) => {
     return item.type === "video" || item.type === "audio";
-  });
+  }), [trackItemsMap]);
 
   const handleTextChange = (id: string, _: string) => {
     const elRef = document.querySelector(`.id-${id}`) as HTMLDivElement;
@@ -238,19 +239,6 @@ const Composition = () => {
       })
     ).filter(group => group.length > 0);
 
-    // Debug: Log image items being rendered
-    const imageItems = filtered.flatMap(group =>
-      group.filter(item => trackItemsMap[item.id]?.type === "image")
-    );
-    if (imageItems.length > 0) {
-      console.log(`[Composition] Rendering ${imageItems.length} image(s):`, imageItems.map(item => ({
-        id: item.id,
-        from: trackItemsMap[item.id]?.display?.from,
-        to: trackItemsMap[item.id]?.display?.to,
-        src: trackItemsMap[item.id]?.details?.src?.substring(0, 50) + "...",
-      })));
-    }
-
     return filtered;
   }, [groupedItems, hasTranscriptData, trackItemsMap]);
 
@@ -286,57 +274,30 @@ const Composition = () => {
 
   return (
     <>
-      {/* Transcript-driven video rendering with optional zoom for jump-cut smoothing */}
+      {/* Transcript-driven video rendering - NO zoom effects to prevent shakiness */}
       {hasTranscriptData && (
         <AbsoluteFill style={{ backgroundColor: "#000" }}>
-          {segmentFrames.map(({ segment, startFrame, durationInFrames, videoStartFrame, videoEndFrame }, index) => {
-            // Calculate zoom scale based on settings
-            let zoomScale = 1;
-            if (segmentZoom.enabled) {
-              const { amount, pattern } = segmentZoom;
-              switch (pattern) {
-                case "alternate":
-                  // Alternate between normal (1) and zoomed (amount) on each segment
-                  zoomScale = index % 2 === 0 ? 1 : amount;
-                  break;
-                case "all-zoomed":
-                  // All segments are zoomed
-                  zoomScale = amount;
-                  break;
-                case "first-normal":
-                  // First segment normal, rest zoomed
-                  zoomScale = index === 0 ? 1 : amount;
-                  break;
-              }
-            }
-
-            return (
-              <Sequence
-                key={`transcript-${segment.clipId}-${index}`}
-                from={startFrame}
-                durationInFrames={durationInFrames}
-              >
-                <AbsoluteFill
+          {segmentFrames.map(({ segment, startFrame, durationInFrames, videoStartFrame, videoEndFrame }, index) => (
+            <Sequence
+              key={`transcript-${segment.clipId}-${index}`}
+              from={startFrame}
+              durationInFrames={durationInFrames}
+            >
+              <AbsoluteFill>
+                <Video
+                  src={segment.clipUrl}
+                  startFrom={videoStartFrame}
+                  endAt={videoEndFrame}
                   style={{
-                    transform: zoomScale !== 1 ? `scale(${zoomScale})` : undefined,
-                    transformOrigin: "center center",
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
                   }}
-                >
-                  <Video
-                    src={segment.clipUrl}
-                    startFrom={videoStartFrame}
-                    endAt={videoEndFrame}
-                    style={{
-                      width: "100%",
-                      height: "100%",
-                      objectFit: "cover",
-                    }}
-                    pauseWhenBuffering
-                  />
-                </AbsoluteFill>
-              </Sequence>
-            );
-          })}
+                  pauseWhenBuffering
+                />
+              </AbsoluteFill>
+            </Sequence>
+          ))}
         </AbsoluteFill>
       )}
 
@@ -360,12 +321,12 @@ const Composition = () => {
           }
           const firstItem = trackItemsMap[group[0].id];
           if (!firstItem) return null;
-          const from = (firstItem.display.from / 1000) * fps;
+          const from = Math.floor((firstItem.display.from / 1000) * fps);
           return (
             <TransitionSeries from={from} key={index}>
               {group.map((item) => {
                 if (item.type === "transition") {
-                  const durationInFrames = (item.duration / 1000) * fps;
+                  const durationInFrames = Math.ceil((item.duration / 1000) * fps);
                   return Transitions[item.kind]({
                     durationInFrames,
                     ...size,
@@ -406,12 +367,12 @@ const Composition = () => {
         }
         const firstItem = trackItemsMap[group[0].id];
         if (!firstItem) return null;
-        const from = (firstItem.display.from / 1000) * fps;
+        const from = Math.floor((firstItem.display.from / 1000) * fps);
         return (
           <TransitionSeries from={from} key={index}>
             {group.map((item) => {
               if (item.type === "transition") {
-                const durationInFrames = (item.duration / 1000) * fps;
+                const durationInFrames = Math.ceil((item.duration / 1000) * fps);
                 return Transitions[item.kind]({
                   durationInFrames,
                   ...size,
@@ -435,7 +396,7 @@ const Composition = () => {
       })}
 
       {/* Current caption overlay - 3 words at a time */}
-      {currentCaption && (
+      {activeCaption && (
         <div
           style={{
             position: "absolute",
@@ -456,7 +417,7 @@ const Composition = () => {
               textShadow: "-2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000",
             }}
           >
-            {currentCaption.text}
+            {activeCaption.text}
           </span>
         </div>
       )}

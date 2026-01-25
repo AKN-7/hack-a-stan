@@ -1,121 +1,57 @@
 import { useMemo } from "react";
-import { AbsoluteFill, Sequence, OffthreadVideo, useCurrentFrame, interpolate } from "remotion";
+import { AbsoluteFill, Sequence, OffthreadVideo, useCurrentFrame } from "remotion";
 import useTranscriptStore from "../store/use-transcript-store";
 import useStore from "../store/use-store";
-import useEffectsStore from "../store/use-effects-store";
 import { calculateSegmentFrames } from "../utils/segment-frames";
-
-// Transition duration in frames (at 30fps, 4 frames ≈ 133ms)
-const TRANSITION_FRAMES = 4;
 
 interface TranscriptCompositionProps {
   // Whether to show captions overlay
   showCaptions?: boolean;
 }
 
-interface SegmentWithTransitionProps {
-  src: string;
-  videoStartFrame: number;
-  videoEndFrame: number;
-  durationInFrames: number;
-  baseZoom: number;
-  isFirst: boolean;
-  isLast: boolean;
-  smoothTransitions: boolean;
-}
-
-/**
- * Renders a video segment with smooth zoom transitions at boundaries.
- * This helps mask hard cuts by adding a subtle zoom in at the start
- * and zoom out at the end of each segment.
- */
-const SegmentWithTransition = ({
-  src,
-  videoStartFrame,
-  videoEndFrame,
-  durationInFrames,
-  baseZoom,
-  isFirst,
-  isLast,
-  smoothTransitions,
-}: SegmentWithTransitionProps) => {
-  const frame = useCurrentFrame();
-
-  // Calculate scale with transition effect
-  let scale = baseZoom;
-
-  if (smoothTransitions && durationInFrames > TRANSITION_FRAMES * 2) {
-    // Zoom in slightly at the start of segment (masks the incoming cut)
-    if (!isFirst && frame < TRANSITION_FRAMES) {
-      const zoomIn = interpolate(
-        frame,
-        [0, TRANSITION_FRAMES],
-        [1.08, 1], // Start slightly zoomed in, ease out to normal
-        { extrapolateRight: "clamp" }
-      );
-      scale *= zoomIn;
-    }
-
-    // Zoom out slightly at the end of segment (masks the outgoing cut)
-    if (!isLast && frame > durationInFrames - TRANSITION_FRAMES) {
-      const zoomOut = interpolate(
-        frame,
-        [durationInFrames - TRANSITION_FRAMES, durationInFrames],
-        [1, 1.08], // Ease from normal to slightly zoomed
-        { extrapolateLeft: "clamp" }
-      );
-      scale *= zoomOut;
-    }
-  }
-
-  return (
-    <AbsoluteFill>
-      <OffthreadVideo
-        src={src}
-        startFrom={videoStartFrame}
-        endAt={videoEndFrame}
-        style={{
-          width: "100%",
-          height: "100%",
-          objectFit: "cover",
-          transform: `scale(${scale})`,
-          transformOrigin: "center center",
-        }}
-      />
-    </AbsoluteFill>
-  );
-};
-
 /**
  * TranscriptComposition renders video based on transcript keep segments.
  * This is the core of transcript-driven editing - the video plays only
  * the parts where speech exists, automatically cutting silence and
  * deleted words.
+ *
+ * NOTE: Zoom transitions have been REMOVED as they were causing perceived
+ * shakiness due to alternating scale values between segments.
  */
 const TranscriptComposition = ({ showCaptions = false }: TranscriptCompositionProps) => {
   const { fps, size } = useStore();
-  const { getRenderSegments, getCaptionsForRender } = useTranscriptStore();
-  const { segmentZoom } = useEffectsStore();
   const frame = useCurrentFrame();
 
-  const renderSegments = getRenderSegments();
-  const captions = getCaptionsForRender();
+  // Subscribe to transcript store state for reactivity
+  const clips = useTranscriptStore((state) => state.clips);
+  const clipOrder = useTranscriptStore((state) => state.clipOrder);
+  const getRenderSegments = useTranscriptStore((state) => state.getRenderSegments);
+  const getCaptionsForRender = useTranscriptStore((state) => state.getCaptionsForRender);
 
-  // Check if smooth transitions are enabled
-  const smoothTransitions = segmentZoom?.enabled ?? true;
+  // Memoize render segments to avoid recalculating on every frame
+  const renderSegments = useMemo(
+    () => getRenderSegments(),
+    [clips, clipOrder, getRenderSegments]
+  );
+
+  // Memoize captions
+  const captions = useMemo(
+    () => getCaptionsForRender(),
+    [clips, clipOrder, getCaptionsForRender]
+  );
 
   // Calculate current time in the edited timeline
   const currentTimeMs = (frame / fps) * 1000;
 
-  // Find the current caption (3 words at a time)
-  const currentCaption = useMemo(() => {
+  // Find the current caption - use simple lookup without causing memoization issues
+  const currentCaption = (() => {
     for (const caption of captions) {
       if (currentTimeMs >= caption.startMs && currentTimeMs < caption.endMs) {
         return caption;
       }
     }
     return null;
-  }, [captions, currentTimeMs]);
+  })();
 
   // Pre-calculate frame positions using cumulative approach to avoid rounding drift
   const segmentFrames = useMemo(
@@ -142,33 +78,27 @@ const TranscriptComposition = ({ showCaptions = false }: TranscriptCompositionPr
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
-      {/* Render each keep segment as a Remotion Sequence with smooth transitions */}
-      {segmentFrames.map(({ segment, startFrame, durationInFrames, videoStartFrame, videoEndFrame }, index) => {
-        // Calculate zoom for this segment
-        const isEvenSegment = index % 2 === 0;
-        const baseZoom = segmentZoom?.enabled
-          ? (isEvenSegment ? segmentZoom.amount : 1 / segmentZoom.amount)
-          : 1;
-
-        return (
-          <Sequence
-            key={`${segment.clipId}-${index}`}
-            from={startFrame}
-            durationInFrames={durationInFrames}
-          >
-            <SegmentWithTransition
+      {/* Render each keep segment as a Remotion Sequence - NO zoom effects */}
+      {segmentFrames.map(({ segment, startFrame, durationInFrames, videoStartFrame, videoEndFrame }, index) => (
+        <Sequence
+          key={`${segment.clipId}-${index}`}
+          from={startFrame}
+          durationInFrames={durationInFrames}
+        >
+          <AbsoluteFill>
+            <OffthreadVideo
               src={segment.clipUrl}
-              videoStartFrame={videoStartFrame}
-              videoEndFrame={videoEndFrame}
-              durationInFrames={durationInFrames}
-              baseZoom={baseZoom}
-              isFirst={index === 0}
-              isLast={index === segmentFrames.length - 1}
-              smoothTransitions={smoothTransitions}
+              startFrom={videoStartFrame}
+              endAt={videoEndFrame}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+              }}
             />
-          </Sequence>
-        );
-      })}
+          </AbsoluteFill>
+        </Sequence>
+      ))}
 
       {/* Caption overlay - 3 words at a time */}
       {showCaptions && currentCaption && (
