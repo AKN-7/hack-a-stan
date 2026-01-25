@@ -1,6 +1,7 @@
 import { useMemo, useState, useRef, useCallback } from "react";
 import { Music, X, Volume2, GripVertical } from "lucide-react";
 import useTranscriptStore from "../store/use-transcript-store";
+import useStore from "../store/use-store";
 import { cn } from "@/lib/utils";
 
 interface MusicTrackProps {
@@ -84,12 +85,36 @@ const MusicTrack = ({ totalDurationMs }: MusicTrackProps) => {
   // Don't render if no music
   if (musicClips.length === 0) return null;
 
+  const { playerRef, fps, clearTimelineSelection } = useStore();
+
   return (
     <div
-      className="flex items-center h-12 mb-2"
+      className="flex items-center h-12 mb-2 cursor-pointer"
       onMouseMove={dragging ? handleMouseMove : undefined}
       onMouseUp={dragging ? handleMouseUp : undefined}
       onMouseLeave={dragging ? handleMouseUp : undefined}
+      onClick={(e) => {
+        // Handle clicks on margins/gaps
+        const target = e.target as HTMLElement;
+        if (dragging) return;
+        if (target.closest('button')) return;
+        if (target.closest('.trim-handle')) return;
+        if (target.closest('input[type="range"]')) return;
+        if (target.closest('.track-content')) return; // Let track-content handle its own clicks
+        
+        // Calculate time based on track-content position
+        const trackContent = e.currentTarget.querySelector('.track-content') as HTMLElement;
+        if (!trackContent || !playerRef?.current || totalDurationMs <= 0) return;
+        
+        const rect = trackContent.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const ratio = Math.max(0, Math.min(1, x / rect.width));
+        const targetMs = ratio * totalDurationMs;
+        const targetFrame = Math.round((targetMs / 1000) * fps);
+        
+        playerRef.current.seekTo(targetFrame);
+        clearTimelineSelection();
+      }}
     >
       {/* Track label */}
       <div className="hidden md:flex items-center gap-1.5 px-3 w-20 shrink-0 text-xs font-medium text-muted-foreground">

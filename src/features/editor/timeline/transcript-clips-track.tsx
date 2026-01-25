@@ -1,9 +1,22 @@
-import { useCallback, useMemo, useRef, useState, useEffect } from "react";
-import { Film, GripHorizontal, Loader2, Scissors } from "lucide-react";
-import useTranscriptStore from "../store/use-transcript-store";
+import { useCallback, useMemo, useRef, useState, useEffect, Fragment } from "react";
+import { Film, GripHorizontal, Loader2, Scissors, Sparkles } from "lucide-react";
+import useTranscriptStore, { TransitionType } from "../store/use-transcript-store";
 import useStore from "../store/use-store";
 import { useCurrentPlayerFrame } from "../hooks/use-current-frame";
 import { cn } from "@/lib/utils";
+
+// Transition type icons (simplified)
+const TRANSITION_ICONS: Record<TransitionType, string> = {
+  none: "−",
+  fade: "◐",
+  slide: "→",
+  wipe: "▶",
+  flip: "⟳",
+  clockWipe: "◷",
+  star: "★",
+  circle: "●",
+  rectangle: "■",
+};
 
 // Clip color palette - matching transcript panel
 const CLIP_STYLES = [
@@ -45,9 +58,9 @@ interface TranscriptClipsTrackProps {
 }
 
 const TranscriptClipsTrack = ({ totalDurationMs }: TranscriptClipsTrackProps) => {
-  const { clips, clipOrder, reorderClips, trimClip } = useTranscriptStore();
+  const { clips, clipOrder, reorderClips, trimClip, getTransitionBetween, clipTransitions } = useTranscriptStore();
   const getRenderSegments = useTranscriptStore(s => s.getRenderSegments);
-  const { fps, playerRef, selectedTimelineItemId, setTimelineSelection, clearTimelineSelection } = useStore();
+  const { fps, playerRef, selectedTimelineItemId, selectedTimelineItemType, setTimelineSelection, clearTimelineSelection } = useStore();
   const currentFrame = useCurrentPlayerFrame(playerRef);
 
   const trackRef = useRef<HTMLDivElement>(null);
@@ -302,7 +315,7 @@ const TranscriptClipsTrack = ({ totalDurationMs }: TranscriptClipsTrackProps) =>
   return (
     <div
       ref={trackRef}
-      className="h-full flex items-center gap-2 relative cursor-pointer bg-muted/30"
+      className="h-full w-full flex items-center gap-1 relative cursor-pointer bg-muted/30"
       onClick={handleTrackClick}
     >
       {/* Playhead */}
@@ -313,7 +326,7 @@ const TranscriptClipsTrack = ({ totalDurationMs }: TranscriptClipsTrackProps) =>
         />
       )}
 
-      {/* Clips */}
+      {/* Clips with Transition Indicators */}
       {clipBlocks.map((block, index) => {
         const isDragging = draggedClipId === block.clipId;
         const isDropTarget = dragOverIndex === index && draggedClipId !== block.clipId;
@@ -321,7 +334,7 @@ const TranscriptClipsTrack = ({ totalDurationMs }: TranscriptClipsTrackProps) =>
         const hasError = block.status === "error";
         const isReady = block.status === "ready";
         const isTrimming = trimmingClipId === block.clipId;
-        const isSelected = selectedTimelineItemId === block.clipId;
+        const isSelected = selectedTimelineItemId === block.clipId && selectedTimelineItemType === "transcript-clip";
 
         const widthPercent = totalDurationMs > 0
           ? (block.durationMs / totalDurationMs) * 100
@@ -333,11 +346,19 @@ const TranscriptClipsTrack = ({ totalDurationMs }: TranscriptClipsTrackProps) =>
         const clipData = clips[block.clipId];
         const style = getClipStyle(clipData?.colorIndex ?? getStableColorIndex(block.clipId));
 
+        // Check for transition to next clip
+        const nextBlock = clipBlocks[index + 1];
+        const transition = nextBlock ? getTransitionBetween(block.clipId, nextBlock.clipId) : null;
+        // transitionId is ALWAYS computed if there's a next block (for adding new transitions)
+        // Use "::" delimiter to avoid conflicts with clipId dashes
+        const transitionId = nextBlock ? `transition::${block.clipId}::${nextBlock.clipId}` : null;
+        const isTransitionSelected = transitionId && selectedTimelineItemId === transitionId && selectedTimelineItemType === "transition";
+
         return (
+          <Fragment key={block.clipId}>
           <div
-            key={block.clipId}
             className={cn(
-              "relative h-14 rounded-2xl flex items-center transition-all duration-200 ease-out flex-shrink-0",
+              "relative h-14 rounded-2xl flex items-center transition-all duration-200 ease-out overflow-hidden",
               isReady && !isTrimming ? "cursor-pointer" : "cursor-default",
               isDragging
                 ? "opacity-50 scale-95 border-2 border-dashed border-muted-foreground/40 bg-muted"
@@ -352,8 +373,8 @@ const TranscriptClipsTrack = ({ totalDurationMs }: TranscriptClipsTrackProps) =>
               isSelected && "ring-2 ring-primary ring-offset-2 ring-offset-background shadow-lg"
             )}
             style={{
-              width: `${Math.max(3, widthPercent)}%`,
-              minWidth: "40px",
+              width: `${Math.max(5, widthPercent)}%`,
+              minWidth: "30px",
             }}
             draggable={isReady && !isTrimming}
             onClick={() => {
@@ -440,6 +461,32 @@ const TranscriptClipsTrack = ({ totalDurationMs }: TranscriptClipsTrackProps) =>
               </button>
             )}
           </div>
+
+          {/* Transition indicator between clips */}
+          {nextBlock && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setTimelineSelection(transitionId!, "transition");
+              }}
+              className={cn(
+                "flex-shrink-0 h-8 rounded-md transition-all duration-150 flex items-center justify-center",
+                isTransitionSelected
+                  ? "w-7 bg-primary shadow-md"
+                  : transition && transition.type !== "none"
+                  ? "w-4 bg-violet-400 hover:w-7 hover:bg-violet-500"
+                  : "w-4 bg-muted-foreground/30 hover:w-7 hover:bg-muted-foreground/50"
+              )}
+              title={transition ? `${transition.type} (${transition.durationMs}ms)` : "Add transition"}
+            >
+              <span className="text-white text-[10px] font-bold">
+                {transition && transition.type !== "none"
+                  ? TRANSITION_ICONS[transition.type]
+                  : "+"}
+              </span>
+            </button>
+          )}
+          </Fragment>
         );
       })}
     </div>

@@ -44,44 +44,69 @@ async function runPass1(clips: ClipTranscript[]) {
     `=== CLIP ${clip.clipIndex} (ID: ${clip.clipId}) ===\n${clip.text}`
   ).join("\n\n");
 
-  const systemPrompt = `You are analyzing video clips to understand the content and identify duplicate takes.
+  const systemPrompt = `You are analyzing video clips to identify true duplicates vs unique content.
 
-Your job is to:
-1. Read all the transcripts and understand what this person is trying to communicate
-2. Notice if any clips cover the same content (duplicate takes, same intro recorded twice, same point explained with different wording)
-3. For duplicates, pick the best version (cleaner delivery, more confident, better phrasing)
+CRITICAL: Only remove clips that are TRUE RE-TAKES of the exact same content.
 
-WHAT COUNTS AS DUPLICATES (remove the worse one):
-- Two clips both introducing themselves ("I'm X at Y company" vs "I'm the founder of Y")
-- Same concept explained with minor word differences
-- Same purpose even if words differ slightly
-- Re-recorded sections where the creator started over
+WHAT IS A TRUE DUPLICATE (consolidate - pick best one):
+- Same sentence said twice with minor word differences
+- Same introduction recorded multiple times
+- Creator clearly started over and re-recorded the same thing
 
-WHAT COUNTS AS UNIQUE (keep both):
-- Different topics, examples, or stories
-- Additional details not covered elsewhere
-- Genuinely new information
+WHAT IS NOT A DUPLICATE (keep both - they add different value):
+- Different ANGLES on the same topic (e.g., facts vs social proof vs personal reaction)
+- Different DETAILS even if same general topic
+- Different CONTEXT (e.g., one sets location, another gives specs)
+- One clip has information the other doesn't
 
-Be intelligent about this. Don't follow rigid rules - understand the MEANING and PURPOSE of each clip.`;
+BE CONSERVATIVE. When in doubt, keep both clips.
+The goal is to remove obvious re-takes, NOT to aggressively cut content.
+
+EXAMPLE - 3 clips about a watermelon:
+- Clip A: "This watermelon is 45 pounds and costs $300" → FACTS
+- Clip B: "Everyone in the store is stopping to take photos" → SOCIAL PROOF
+- Clip C: "I'm in Korea and this is the craziest watermelon" → CONTEXT
+These are NOT duplicates - they each add unique value. Keep all 3.
+
+EXAMPLE - 3 clips that ARE duplicates:
+- Clip A: "I'm John, the founder of Acme"
+- Clip B: "I'm John, I founded Acme"
+- Clip C: "Hey, I'm John, founder at Acme"
+These ARE duplicates - same intro recorded 3 times. Pick the best one.`;
 
   const userPrompt = `Read these ${clips.length} clips carefully:
 
 ${transcriptContext}
 
-First, understand what this content is about overall.
+STEP 1: Does each clip add UNIQUE information or perspective?
+- Different facts, details, or numbers = UNIQUE
+- Different angle (social proof vs specs vs context) = UNIQUE
+- Same sentence re-recorded = DUPLICATE
 
-Then, identify any duplicate takes - clips that cover the same ground. For each group of duplicates, pick the best version to keep.
+STEP 2: Only group clips that are TRUE re-takes of the exact same content.
+If clips have different information, they are NOT duplicates.
+
+STEP 3: For each group of true duplicates, pick the best one.
+Clips with unique content should each be their own "group" with themselves as the winner.
 
 Return JSON:
 {
   "understanding": "Brief description of what this content is about (2-3 sentences)",
-  "clipsToRemove": [
+  "thematicGroups": [
     {
-      "clipId": "actual-clip-id",
-      "reason": "Why this clip should be removed (e.g., 'Duplicate intro - Clip 2 has better delivery')"
+      "theme": "Name of this theme (e.g., 'Introduction')",
+      "clipIds": ["all", "clips", "covering", "this", "theme"],
+      "winnerId": "the-single-best-clip-id",
+      "winnerReason": "Why this clip won (delivery, completeness, phrasing)"
     }
   ],
-  "uniqueClipIds": ["clip-id-1", "clip-id-2"]  // All clips that should be KEPT
+  "clipsToRemove": [
+    {
+      "clipId": "clip-id",
+      "reason": "Lost to [winner] for [theme] - [specific reason]"
+    }
+  ],
+  "uniqueClipIds": ["winner-1", "winner-2"]  // ONE winner per theme only
 }
 
 Use actual clipId values like "${clips[0]?.clipId}".
@@ -109,6 +134,7 @@ Return ONLY valid JSON.`;
   // Parse response
   let result = {
     understanding: "",
+    thematicGroups: [] as Array<{ theme: string; clipIds: string[]; winnerId: string; winnerReason: string }>,
     clipsToRemove: [] as Array<{ clipId: string; reason: string }>,
     uniqueClipIds: [] as string[],
   };
@@ -117,13 +143,50 @@ Return ONLY valid JSON.`;
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
+
+      // Handle new thematic groups format
+      const thematicGroups = parsed.thematicGroups || [];
+
+      // Extract winners from thematic groups
+      const winners = new Set(thematicGroups.map((g: any) => g.winnerId).filter(Boolean));
+
+      // Build clipsToRemove from thematic groups (losers)
+      // IMPORTANT: Only remove a clip if it's NOT a winner in ANY group
+      // A clip can be in multiple groups - it might lose in one but have unique content in another
+      const clipsToRemove: Array<{ clipId: string; reason: string }> = [];
+      for (const group of thematicGroups) {
+        for (const clipId of (group.clipIds || [])) {
+          // Only remove if: not the winner in this group AND not a winner in any other group
+          if (clipId !== group.winnerId && !winners.has(clipId)) {
+            // Avoid adding the same clip twice
+            if (!clipsToRemove.find(c => c.clipId === clipId)) {
+              clipsToRemove.push({
+                clipId,
+                reason: `Lost to ${group.winnerId} for "${group.theme}" - ${group.winnerReason || 'better take'}`,
+              });
+            }
+          }
+        }
+      }
+
+      // Also include any explicit clipsToRemove from response
+      if (parsed.clipsToRemove) {
+        for (const item of parsed.clipsToRemove) {
+          const clipId = typeof item === 'string' ? item : item.clipId;
+          if (!clipsToRemove.find(c => c.clipId === clipId)) {
+            clipsToRemove.push({
+              clipId,
+              reason: typeof item === 'string' ? 'Duplicate take' : (item.reason || 'Duplicate take'),
+            });
+          }
+        }
+      }
+
       result = {
         understanding: parsed.understanding || "",
-        clipsToRemove: (parsed.clipsToRemove || []).map((item: any) => ({
-          clipId: typeof item === 'string' ? item : item.clipId,
-          reason: typeof item === 'string' ? 'Duplicate take' : (item.reason || 'Duplicate take'),
-        })),
-        uniqueClipIds: parsed.uniqueClipIds || [],
+        thematicGroups,
+        clipsToRemove,
+        uniqueClipIds: parsed.uniqueClipIds || Array.from(winners) as string[],
       };
     }
   } catch (parseError) {
@@ -143,11 +206,16 @@ Return ONLY valid JSON.`;
 
   console.log("\n[PASS 1] PARSED RESULT:");
   console.log(`Understanding: "${result.understanding}"`);
-  console.log(`Clips to remove (${result.clipsToRemove.length}):`);
+  console.log(`\nThematic Groups (${result.thematicGroups.length}):`);
+  result.thematicGroups.forEach((g, i) => {
+    console.log(`  ${i + 1}. "${g.theme}": ${g.clipIds?.length || 0} clips → Winner: ${g.winnerId}`);
+    console.log(`     Reason: ${g.winnerReason}`);
+  });
+  console.log(`\nClips to remove (${result.clipsToRemove.length}):`);
   result.clipsToRemove.forEach(c => {
     console.log(`  - ${c.clipId}: ${c.reason}`);
   });
-  console.log(`Unique clips to keep (${result.uniqueClipIds.length}): ${result.uniqueClipIds.join(", ")}`);
+  console.log(`\nFinal unique clips (${result.uniqueClipIds.length}): ${result.uniqueClipIds.join(", ")}`);
   console.log("=".repeat(80) + "\n");
 
   return result;
@@ -358,6 +426,20 @@ Return ONLY valid JSON.`;
     result.suggestedSentenceOrder = sentences.map(s => s.id);
   }
 
+  // DEDUPLICATE: AI might return the same sentence ID multiple times - keep only first occurrence
+  const seenIds = new Set<string>();
+  const deduped: string[] = [];
+  for (const id of result.suggestedSentenceOrder) {
+    if (!seenIds.has(id)) {
+      seenIds.add(id);
+      deduped.push(id);
+    }
+  }
+  if (deduped.length !== result.suggestedSentenceOrder.length) {
+    console.log(`[Pass 2 Sentences] Removed ${result.suggestedSentenceOrder.length - deduped.length} duplicate sentence IDs from order`);
+  }
+  result.suggestedSentenceOrder = deduped;
+
   // Ensure all input sentences are in the order
   const orderedSet = new Set(result.suggestedSentenceOrder);
   const missingSentences = sentences.filter(s => !orderedSet.has(s.id)).map(s => s.id);
@@ -412,33 +494,26 @@ async function runPass3(clips: ClipTranscript[]) {
 
   const systemPrompt = `You are doing a final polish on a video script.
 
-The clips are already in optimal order with duplicates removed. Your job is to make CONSERVATIVE cuts that improve the script WITHOUT breaking grammar.
+## WORD CUTS - ONLY TWO TYPES ALLOWED
 
-## WORD CUTS - BE VERY CONSERVATIVE
+1. **STUTTERING**: The EXACT same word appears twice IN A ROW
+   - "I I think" → cut one "I"
+   - "the the" → cut one "the"
+   - "look look" → cut one "look"
 
-ONLY cut these specific patterns:
-- **Stuttering**: Repeated words in immediate sequence ("I I I think" → keep only last "I")
-- **Repeated filler in sequence**: ("so so so" → keep one "so")
-- **Obvious filler words**: "um", "uh", "like" when used as filler (not "like" meaning similar)
-- **Broken/garbled speech**: Words that are clearly transcription errors or nonsensical
+2. **FILLER SOUNDS**: Only these specific sounds: "um", "uh", "er", "ah"
+   - These are pure noise with no meaning
+   - Always safe to remove
 
-DO NOT cut:
-- Transition phrases ("And not only", "But also", "So anyway") - these connect ideas
-- Words that would break grammar if removed
-- "Just", "really", "actually" unless repeated in immediate sequence
-- Anything where removing it would make the sentence sound unnatural
+## THAT'S IT. NOTHING ELSE.
 
-## CRITICAL: VERIFY EACH CUT
-Before including a cut, mentally read the sentence WITHOUT those words.
-If it sounds broken, ungrammatical, or unnatural → DO NOT INCLUDE THAT CUT.
+Do NOT cut:
+- Words that appear multiple times but NOT in immediate sequence
+- Words you think are "filler" like "like", "just", "so", "actually", "really"
+- Transition phrases
+- Anything that would change the meaning or grammar
 
-Example of BAD cut:
-- Original: "And not only this watermelon crazy"
-- Cutting "And not only" → "this watermelon crazy" ← BROKEN GRAMMAR, don't cut
-
-Example of GOOD cut:
-- Original: "This this is crazy"
-- Cutting first "This" → "This is crazy" ← STILL GRAMMATICAL, good cut
+The rule is simple: if you have to think about whether to cut it, DON'T CUT IT.
 
 ## TEXT HOOK
 Find THE most attention-grabbing line (5-10 words max).
@@ -572,50 +647,68 @@ async function runPass4(sentences: SentenceData[]) {
     `[${i + 1}] ID: ${s.id}\n"${s.text}"`
   ).join("\n\n");
 
-  const systemPrompt = `You are doing semantic deduplication on a video script.
+  const systemPrompt = `You are doing a final polish pass to remove REDUNDANT SENTENCES from a video script.
 
-The sentences are already in optimal order. Your job is to find THEMATIC REPETITION - places where the same sentiment or idea is expressed multiple times with different words.
+IMPORTANT CONTEXT:
+- Pass 1 already removed duplicate CLIPS (same take recorded multiple times)
+- Now you're looking at the remaining sentences across all kept clips
+- Your job is to find REDUNDANT SENTENCES that say the same thing or express the same sentiment
 
-WHAT TO LOOK FOR:
-- Multiple expressions of amazement ("crazy", "absurd", "insane", "in awe", "mind-blowing")
-- Repeated qualifiers ("really really good" → "so so great" → "absolutely amazing")
-- Same point made with different phrasing
-- Redundant explanations of the same concept
-- Multiple calls-to-action saying the same thing
+WHAT TO DELETE:
 
-IMPORTANT:
-- For each group of similar sentences, KEEP the STRONGEST/most impactful one
-- Delete the weaker/redundant versions
-- Don't delete sentences that add genuinely new information
-- A sentence is redundant only if another sentence already says the same thing better
+1. **LITERAL DUPLICATES**: The exact same sentence appearing twice
+   - "I built the tool" ... later ... "I built the tool" → delete one
 
-Example:
-- "This watermelon is absolutely crazy." (KEEP - most impactful)
-- "I'm in awe of this watermelon." (DELETE - redundant amazement)
-- "This is the most insane thing I've ever seen." (DELETE - more redundant amazement)
-- "It weighs over 200 pounds." (KEEP - new information)`;
+2. **SENTIMENT DUPLICATES**: Multiple sentences expressing the same reaction/feeling
+   - "This is crazy" + "That's crazy" + "Insane" + "Crazy!" → Keep ONE, delete the rest
+   - "I love it" + "This is amazing" + "So good" → Keep the strongest, delete others
+   - Multiple price reactions: "300 dollars?!" + "That's expensive" → Keep one
 
-  const userPrompt = `Here is the ordered script to check for thematic repetition:
+3. **REDUNDANT INFORMATION**: Same fact stated multiple times
+   - "It weighs 45 pounds" + "45 pounds!" → Keep the one with more context
+
+WHAT TO KEEP:
+- Sentences that add NEW information (even if same topic)
+- The STRONGEST/BEST version of each sentiment
+- Context-setting sentences
+- Transitional sentences that help flow
+
+PICKING WHICH TO KEEP:
+- Keep the most complete/eloquent version
+- Keep the one with more context around it
+- Keep earlier occurrences if quality is equal (maintains flow)
+
+Be moderately aggressive - viewers don't want to hear "crazy" 5 times in 30 seconds.`;
+
+  const userPrompt = `Here is the ordered script to polish:
 
 ${sentenceContext}
 
-Read this as a viewer would experience it. Find sentences that are thematically redundant - expressing the same sentiment/idea that another sentence already expresses better.
+Find REDUNDANT sentences to delete:
+1. Literal duplicates (same sentence twice)
+2. Sentiment duplicates (multiple "crazy!", "insane!", "amazing!" reactions)
+3. Redundant information (same fact stated multiple times)
 
-For each redundant sentence, keep the strongest version and mark the others for deletion.
+For each group of redundant sentences, KEEP the best one and DELETE the others.
 
 Return JSON:
 {
   "sentencesToDelete": [
     {
       "sentenceId": "${sentences[0]?.id || 'sentence-id'}",
-      "reason": "Why this sentence should be cut (e.g., 'Redundant amazement - keeping sentence X which is stronger')"
+      "reason": "Redundant with [other sentence] - [why it's redundant]"
     }
   ],
-  "deduplicationReasoning": "Brief summary of what thematic repetition was found"
+  "deduplicationReasoning": "Summary of redundancies found and what was kept"
+}
+
+If the script is tight with no redundancy:
+{
+  "sentencesToDelete": [],
+  "deduplicationReasoning": "No redundancy found - script is concise"
 }
 
 Use the EXACT sentence IDs shown above.
-If there's no thematic repetition, return an empty array for sentencesToDelete.
 Return ONLY valid JSON.`;
 
   const response = await anthropic.messages.create({

@@ -178,6 +178,19 @@ export interface ProcessingEvent {
   timestamp: number;
 }
 
+// Transition between clips
+export type TransitionType = "none" | "fade" | "slide" | "wipe" | "flip" | "clockWipe" | "star" | "circle" | "rectangle";
+export type TransitionDirection = "from-left" | "from-right" | "from-top" | "from-bottom";
+
+export interface ClipTransition {
+  id: string;                    // Unique ID for this transition
+  fromClipId: string;            // Clip before the transition
+  toClipId: string;              // Clip after the transition
+  type: TransitionType;          // Type of transition effect
+  direction?: TransitionDirection; // Direction for slide/wipe
+  durationMs: number;            // Duration of transition in ms
+}
+
 interface ITranscriptStore {
   // Per-clip transcripts
   clips: Record<string, ClipTranscript>;
@@ -336,6 +349,14 @@ interface ITranscriptStore {
 
   // Reset
   reset: () => void;
+
+  // Clip transitions (between clips on timeline)
+  clipTransitions: Record<string, ClipTransition>; // keyed by transition ID
+  getTransitionBetween: (fromClipId: string, toClipId: string) => ClipTransition | null;
+  setTransition: (fromClipId: string, toClipId: string, type: TransitionType, durationMs?: number, direction?: TransitionDirection) => string;
+  updateTransition: (transitionId: string, updates: Partial<Omit<ClipTransition, "id" | "fromClipId" | "toClipId">>) => void;
+  removeTransition: (transitionId: string) => void;
+  getTransitionsForRender: () => Array<{ fromClipId: string; toClipId: string; type: TransitionType; direction?: TransitionDirection; durationMs: number }>;
 }
 
 const generateWordId = () => Math.random().toString(36).substring(2, 11);
@@ -345,6 +366,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
     (set, get) => ({
       clips: {},
       clipOrder: [],
+      clipTransitions: {},
 
       // Sentence-level data for fine-grained ordering
       sentences: {},
@@ -365,13 +387,20 @@ const useTranscriptStore = create<ITranscriptStore>()(
           const word = words[i];
           currentWords.push(word);
 
-          // Sentence boundary: punctuation (. ! ?) or long pause (>500ms to next word)
+          // Sentence boundary: punctuation (. ! ?) or long pause (>800ms to next word)
           const endsWithPunctuation = /[.!?]$/.test(word.text);
           const nextWord = words[i + 1];
-          const hasLongPause = nextWord && (nextWord.startMs - word.endMs > 500);
+          const hasLongPause = nextWord && (nextWord.startMs - word.endMs > 800);
           const isLastWord = i === words.length - 1;
 
-          if (endsWithPunctuation || hasLongPause || isLastWord) {
+          // Minimum sentence length: don't split on pause alone if fewer than 4 words
+          // This prevents fragments like "I'm" from becoming their own sentence
+          const hasMinimumLength = currentWords.length >= 4;
+          const shouldSplit = isLastWord ||
+            (endsWithPunctuation && hasMinimumLength) ||
+            (hasLongPause && hasMinimumLength);
+
+          if (shouldSplit) {
             if (currentWords.length > 0) {
               sentences.push({
                 id: `${clipId}-sent${sentenceIndex}`,
@@ -1628,12 +1657,43 @@ const useTranscriptStore = create<ITranscriptStore>()(
 
       reorderClips: (newClipOrder: string[]) => {
         get()._pushHistory();
-        const { clips } = get();
+        const { clips, sentenceOrder, sentences } = get();
         // Filter out invalid clipIds that don't exist
         const validOrder = newClipOrder.filter(id => clips[id] !== undefined);
         // Ensure no duplicates
         const uniqueOrder = [...new Set(validOrder)];
-        set({ clipOrder: uniqueOrder });
+
+        // IMPORTANT: Also update sentenceOrder to match the new clip order
+        // This ensures the video rendering reflects the reordered clips
+        if (sentenceOrder.length > 0) {
+          // Group sentences by their source clip
+          const sentencesByClip = new Map<string, string[]>();
+          for (const sentenceId of sentenceOrder) {
+            const sentence = sentences[sentenceId];
+            if (!sentence) continue;
+            const clipSentences = sentencesByClip.get(sentence.clipId) || [];
+            clipSentences.push(sentenceId);
+            sentencesByClip.set(sentence.clipId, clipSentences);
+          }
+
+          // Rebuild sentenceOrder based on new clip order
+          const newSentenceOrder: string[] = [];
+          for (const clipId of uniqueOrder) {
+            const clipSentences = sentencesByClip.get(clipId) || [];
+            newSentenceOrder.push(...clipSentences);
+          }
+
+          // Add any sentences from clips not in the new order (edge case)
+          for (const sentenceId of sentenceOrder) {
+            if (!newSentenceOrder.includes(sentenceId)) {
+              newSentenceOrder.push(sentenceId);
+            }
+          }
+
+          set({ clipOrder: uniqueOrder, sentenceOrder: newSentenceOrder });
+        } else {
+          set({ clipOrder: uniqueOrder });
+        }
       },
 
       trimClip: (clipId: string, startMs: number, endMs: number) => {
@@ -1931,50 +1991,16 @@ const useTranscriptStore = create<ITranscriptStore>()(
 
       autoRemoveFillerWords: () => {
         get()._pushHistory();
-        // Comprehensive filler word patterns
+        // ONLY pure hesitation sounds - these are always noise, never meaningful
+        // Everything else is context-dependent and handled by AI in Pass 3
         const fillerPatterns = [
-          // Verbal fillers (hesitation sounds)
           /^u+[hm]+$/i,      // um, uh, uhm, umm, etc.
-          /^a+[hm]+$/i,      // ah, ahm, etc.
-          /^e+[hm]+$/i,      // eh, ehm, etc.
+          /^a+h+$/i,         // ah, ahh, etc.
+          /^e+h+$/i,         // eh, ehh, etc.
           /^m+[hm]+$/i,      // mm, mmm, mhm, etc.
           /^h+[m]+$/i,       // hm, hmm, etc.
           /^er+$/i,          // er, err, errr
           /^uh+$/i,          // uh, uhh, uhhh
-
-          // Common discourse markers (when used as fillers)
-          /^like$/i,         // "like" as filler
-          /^basically$/i,    // "basically"
-          /^actually$/i,     // "actually" (often filler)
-          /^literally$/i,    // "literally"
-          /^honestly$/i,     // "honestly"
-          /^frankly$/i,      // "frankly"
-
-          // Sentence starters used as fillers
-          /^so+$/i,          // "so", "sooo" at start
-          /^well$/i,         // "well" as filler
-          /^now$/i,          // "now" as filler (context dependent)
-
-          // Agreement/acknowledgment fillers
-          /^right\??$/i,     // "right?" as filler
-          /^okay$/i,         // "okay" as filler
-          /^ok$/i,           // "ok"
-          /^yeah$/i,         // "yeah" as filler
-          /^yep$/i,          // "yep"
-          /^sure$/i,         // "sure" as filler
-
-          // Hedging phrases
-          /^kind of$/i,      // "kind of"
-          /^sort of$/i,      // "sort of"
-          /^kinda$/i,        // "kinda"
-          /^sorta$/i,        // "sorta"
-
-          // Phrases (matched as sequences in context)
-          /^i mean$/i,       // "I mean"
-          /^you know$/i,     // "you know"
-          /^you see$/i,      // "you see"
-          /^i guess$/i,      // "I guess"
-          /^i think$/i,      // "I think" (when used as filler)
         ];
 
         let removedCount = 0;
@@ -2380,8 +2406,24 @@ const useTranscriptStore = create<ITranscriptStore>()(
         // Don't run if no clips
         if (clipOrder.length === 0) return { fillerCount: 0, aiCutsCount: 0, clipsRemoved: 0, timeSavedMs: 0 };
 
+        // Reset all previous word deletions and sentence state before re-running
+        // This ensures fresh analysis without stale state from previous runs
+        const resetClips = { ...clips };
+        for (const clipId of clipOrder) {
+          const clip = resetClips[clipId];
+          if (clip?.words) {
+            resetClips[clipId] = {
+              ...clip,
+              words: clip.words.map(w => ({ ...w, isDeleted: false, deletedByTrim: false })),
+            };
+          }
+        }
+
         // Set processing state and mark as having run (prevents running twice)
         set({
+          clips: resetClips,
+          sentences: {},
+          sentenceOrder: [],
           isProcessing: true,
           processingStatus: "Starting magic processing...",
           processingStartTime: Date.now(),
@@ -2390,6 +2432,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
         });
 
         const durationBefore = get().getTotalDurationMs();
+        const fillerCount = 0; // No longer used - AI handles everything in Pass 3
         let aiCutsCount = 0;
         let clipsRemoved = 0;
         let aiSuggestedOrder: string[] | null = null;
@@ -2403,16 +2446,13 @@ const useTranscriptStore = create<ITranscriptStore>()(
         clearProcessingEvents(); // Clear any previous events
 
         try {
-          // Step 1: Remove basic filler words (um, uh, like, etc.)
-          set({ processingStatus: "Removing filler words...", processingStep: 1 });
-          addProcessingEvent("pass_start", "Scanning for filler words...");
-          const fillerCount = autoRemoveFillerWords();
-          if (fillerCount > 0) {
-            addProcessingEvent("words_cut", `Removed ${fillerCount} filler words`, "ums, uhs, likes, you knows");
-          }
-          console.log(`[Auto-Magic] Removed ${fillerCount} filler words`);
+          // AI handles everything - no heuristic pre-processing
+          // Pass 1: Understand + dedupe clips
+          // Pass 2: Order for narrative flow
+          // Pass 3: Cut stuttering + filler sounds with context
+          // Pass 4: Final cleanup
 
-          // Step 2: AI-powered MULTI-PASS analysis
+          // Step 1: AI-powered MULTI-PASS analysis
           // Pass 1: Understand content + Dedupe (identify duplicate takes)
           // Pass 2: Order (arrange clips for best narrative flow)
           // Pass 3: Refine + Hooks (tighten script, generate hook, find emphasis)
@@ -3100,13 +3140,127 @@ const useTranscriptStore = create<ITranscriptStore>()(
         }
       },
 
+      // Clip transitions - get transition between two clips
+      getTransitionBetween: (fromClipId: string, toClipId: string): ClipTransition | null => {
+        const { clipTransitions } = get();
+        return Object.values(clipTransitions).find(
+          t => t.fromClipId === fromClipId && t.toClipId === toClipId
+        ) || null;
+      },
+
+      // Set or update transition between clips
+      setTransition: (fromClipId: string, toClipId: string, type: TransitionType, durationMs = 500, direction?: TransitionDirection): string => {
+        console.log("[Store] setTransition called:", { fromClipId, toClipId, type, durationMs, direction });
+        const { clipTransitions } = get();
+
+        // Check if transition already exists
+        const existing = Object.values(clipTransitions).find(
+          t => t.fromClipId === fromClipId && t.toClipId === toClipId
+        );
+
+        if (existing) {
+          console.log("[Store] Updating existing transition:", existing.id);
+          // Update existing transition
+          set({
+            clipTransitions: {
+              ...clipTransitions,
+              [existing.id]: {
+                ...existing,
+                type,
+                durationMs,
+                direction,
+              },
+            },
+          });
+          return existing.id;
+        }
+
+        // Create new transition (use :: delimiter to avoid conflicts with clipId dashes)
+        const id = `transition::${fromClipId}::${toClipId}`;
+        set({
+          clipTransitions: {
+            ...clipTransitions,
+            [id]: {
+              id,
+              fromClipId,
+              toClipId,
+              type,
+              durationMs,
+              direction,
+            },
+          },
+        });
+        return id;
+      },
+
+      // Update specific transition properties
+      updateTransition: (transitionId: string, updates: Partial<Omit<ClipTransition, "id" | "fromClipId" | "toClipId">>) => {
+        const { clipTransitions } = get();
+        const transition = clipTransitions[transitionId];
+        if (!transition) return;
+
+        set({
+          clipTransitions: {
+            ...clipTransitions,
+            [transitionId]: {
+              ...transition,
+              ...updates,
+            },
+          },
+        });
+      },
+
+      // Remove a transition
+      removeTransition: (transitionId: string) => {
+        const { clipTransitions } = get();
+        const { [transitionId]: _, ...rest } = clipTransitions;
+        set({ clipTransitions: rest });
+      },
+
+      // Get all transitions for rendering (mapped to clip order)
+      getTransitionsForRender: () => {
+        const { clipTransitions, clipOrder, clips } = get();
+        const result: Array<{ fromClipId: string; toClipId: string; type: TransitionType; direction?: TransitionDirection; durationMs: number }> = [];
+
+        // Get non-deleted clips in order
+        const activeClipOrder = clipOrder.filter(id => clips[id] && !clips[id].isDeleted);
+
+        console.log("[Store] getTransitionsForRender:", {
+          clipTransitionsCount: Object.keys(clipTransitions).length,
+          clipTransitions: Object.values(clipTransitions).map(t => ({ from: t.fromClipId, to: t.toClipId, type: t.type })),
+          activeClipOrder,
+        });
+
+        for (let i = 0; i < activeClipOrder.length - 1; i++) {
+          const fromClipId = activeClipOrder[i];
+          const toClipId = activeClipOrder[i + 1];
+
+          const transition = Object.values(clipTransitions).find(
+            t => t.fromClipId === fromClipId && t.toClipId === toClipId
+          );
+
+          if (transition && transition.type !== "none") {
+            console.log("[Store] Found transition for render:", { from: fromClipId, to: toClipId, type: transition.type });
+            result.push({
+              fromClipId: transition.fromClipId,
+              toClipId: transition.toClipId,
+              type: transition.type,
+              direction: transition.direction,
+              durationMs: transition.durationMs,
+            });
+          }
+        }
+
+        return result;
+      },
+
       reset: () => {
         // Clear debounce timer if any
         if (autoMagicDebounceTimer) {
           clearTimeout(autoMagicDebounceTimer);
           autoMagicDebounceTimer = null;
         }
-        set({ clips: {}, clipOrder: [], sentences: {}, sentenceOrder: [], isProcessing: false, processingStatus: "", _hasRunMagicProcessing: false });
+        set({ clips: {}, clipOrder: [], clipTransitions: {}, sentences: {}, sentenceOrder: [], isProcessing: false, processingStatus: "", _hasRunMagicProcessing: false });
       },
     }),
     {
@@ -3114,6 +3268,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
       partialize: (state) => ({
         clips: state.clips,
         clipOrder: state.clipOrder,
+        clipTransitions: state.clipTransitions,
         sentences: state.sentences,
         sentenceOrder: state.sentenceOrder,
         gapThresholdMs: state.gapThresholdMs,

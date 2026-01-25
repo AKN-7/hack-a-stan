@@ -187,10 +187,11 @@ const Header = () => {
 
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      // Check if click is inside timeline area
+      // Check if click is inside timeline area or right panel (transition settings, etc.)
       const isInTimeline = target.closest('[data-timeline]');
       const isDeleteButton = target.closest('[data-delete-button]');
-      if (!isInTimeline && !isDeleteButton) {
+      const isInRightPanel = target.closest('[data-right-panel]');
+      if (!isInTimeline && !isDeleteButton && !isInRightPanel) {
         clearTimelineSelection();
       }
     };

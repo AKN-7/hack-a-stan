@@ -4,7 +4,9 @@ import { dispatch, filter, subject } from "@designcombo/events";
 import { EDIT_OBJECT, ENTER_EDIT_MODE } from "@designcombo/state";
 import { groupTrackItems } from "../utils/track-items";
 import { TransitionSeries, Transitions } from "@designcombo/transitions";
-import { TransitionSeries as VideoTransitionSeries, linearTiming, fade } from "./transitions";
+import { TransitionSeries as VideoTransitionSeries, linearTiming } from "./transitions";
+import { fade, slide, wipe, flip, clockWipe, circle, star, rectangle } from "./transitions/presentations";
+import type { TransitionType, TransitionDirection } from "../store/use-transcript-store";
 import { calculateTextHeight } from "../utils/text";
 import { calculateSegmentFrames } from "../utils/segment-frames";
 import { AbsoluteFill, Sequence, Video, Audio, useCurrentFrame, prefetch } from "remotion";
@@ -50,6 +52,10 @@ const Composition = () => {
   // Background music
   const getBackgroundMusicClips = useTranscriptStore((state) => state.getBackgroundMusicClips);
   const getTotalDurationMs = useTranscriptStore((state) => state.getTotalDurationMs);
+
+  // Per-clip transitions
+  const getTransitionsForRender = useTranscriptStore((state) => state.getTransitionsForRender);
+  const clipTransitions = useTranscriptStore((state) => state.clipTransitions);
 
   // Get transcript-based render segments (now reactive to clips changes)
   const renderSegments = useMemo(() => getRenderSegments(), [clips, clipOrder, getRenderSegments]);
@@ -120,12 +126,42 @@ const Composition = () => {
     return assignments;
   }, [needsMixedModeBroll, renderSegments, clips, clipOrder, getVideoOnlyClips]);
 
-  // Get transition settings for cross-dissolve smoothing
+  // Get transition settings for cross-dissolve smoothing (global fallback)
   const transitions = useEffectsStore((state) => state.transitions);
   const transitionFrames = useMemo(() => {
     if (!transitions.enabled || transitions.type === "none") return 0;
     return Math.round((transitions.durationMs / 1000) * fps);
   }, [transitions.enabled, transitions.type, transitions.durationMs, fps]);
+
+  // Per-clip transitions (takes precedence over global)
+  const perClipTransitions = useMemo(() => getTransitionsForRender(), [clipTransitions, clipOrder, clips, getTransitionsForRender]);
+  const hasPerClipTransitions = perClipTransitions.length > 0;
+
+  // Helper to get the right presentation based on transition type
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const getTransitionPresentation = (type: TransitionType, direction?: TransitionDirection): any => {
+    const sizeProps = { width: size.width, height: size.height };
+    switch (type) {
+      case "fade":
+        return fade();
+      case "slide":
+        return slide({ direction: direction || "from-left" });
+      case "wipe":
+        return wipe({ direction: direction || "from-left" });
+      case "flip":
+        return flip();
+      case "clockWipe":
+        return clockWipe({ width: size.width, height: size.height });
+      case "circle":
+        return circle(sizeProps);
+      case "star":
+        return star(sizeProps);
+      case "rectangle":
+        return rectangle(sizeProps);
+      default:
+        return fade();
+    }
+  };
 
   // Get caption settings
   const captionSettings = useEffectsStore((state) => state.captions);
@@ -478,12 +514,33 @@ const Composition = () => {
   // Handles both video_with_audio clips (render as Video) and audio_only clips (render as Audio)
   const videoContent = hasTranscriptData && !isAudioBrollMode ? (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
-      {transitionFrames > 0 && segmentFrames.length > 1 ? (
+      {(transitionFrames > 0 || hasPerClipTransitions) && segmentFrames.length > 1 ? (
         // Use TransitionSeries for smooth cross-dissolve between segments
         <VideoTransitionSeries>
           {segmentFrames.flatMap(({ segment, durationInFrames, videoStartFrame, videoEndFrame }, index) => {
             // Check if this is an audio_only segment - render as Audio, not Video
             const isAudioOnly = segment.clipType === "audio_only";
+
+            // Get next segment to check for per-clip transition
+            const nextSegment = segmentFrames[index + 1]?.segment;
+            const perClipTransition = nextSegment ? perClipTransitions.find(
+              t => t.fromClipId === segment.clipId && t.toClipId === nextSegment.clipId
+            ) : null;
+
+            // Determine if we should add a transition after this segment
+            const shouldAddTransition = index < segmentFrames.length - 1 && (
+              perClipTransition || transitionFrames > 0
+            );
+
+            // Calculate transition frames (per-clip takes precedence)
+            const effectiveTransitionFrames = perClipTransition
+              ? Math.round((perClipTransition.durationMs / 1000) * fps)
+              : transitionFrames;
+
+            // Get transition presentation (per-clip takes precedence)
+            const transitionPresentation = perClipTransition
+              ? getTransitionPresentation(perClipTransition.type, perClipTransition.direction)
+              : fade();
 
             const elements: React.ReactNode[] = [
               <VideoTransitionSeries.Sequence
@@ -520,13 +577,13 @@ const Composition = () => {
               </VideoTransitionSeries.Sequence>
             ];
 
-            // Add transition after each segment except the last
-            if (index < segmentFrames.length - 1) {
+            // Add transition after each segment (if applicable)
+            if (shouldAddTransition && effectiveTransitionFrames > 0) {
               elements.push(
                 <VideoTransitionSeries.Transition
                   key={`trans-${index}`}
-                  presentation={fade()}
-                  timing={linearTiming({ durationInFrames: transitionFrames })}
+                  presentation={transitionPresentation}
+                  timing={linearTiming({ durationInFrames: effectiveTransitionFrames })}
                 />
               );
             }

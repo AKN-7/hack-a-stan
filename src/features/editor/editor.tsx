@@ -21,8 +21,9 @@ import { FONTS } from "./data/fonts";
 import { dispatch } from "@designcombo/events";
 import { Transcript } from "./menu-item/transcript";
 import { design } from "./mock";
-import { ChevronLeft, ChevronRight, FileText, Sparkles, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileText, Sparkles, X, Layers } from "lucide-react";
 import { Chat } from "./menu-item/chat";
+import { TransitionSettings } from "./control-item/transition-settings";
 import useTranscriptStore from "./store/use-transcript-store";
 import UploadLanding from "./upload-landing";
 import { useIsMobile } from "@/hooks/use-media-query";
@@ -47,7 +48,7 @@ const Editor = ({ tempId, id }: { tempId?: string; id?: string }) => {
 	const [isChatOpen, setIsChatOpen] = useState(!isMobile);
 	const timelinePanelRef = useRef<ImperativePanelHandle>(null);
 	const sceneRef = useRef<SceneRef>(null);
-	const { timeline, playerRef, trackItemsMap } = useStore();
+	const { timeline, playerRef, trackItemsMap, selectedTimelineItemId, selectedTimelineItemType, clearTimelineSelection } = useStore();
 
 	// Close panels when switching to mobile view
 	useEffect(() => {
@@ -56,6 +57,13 @@ const Editor = ({ tempId, id }: { tempId?: string; id?: string }) => {
 			setIsChatOpen(false);
 		}
 	}, [isMobile]);
+
+	// Auto-open right panel when transition is selected
+	useEffect(() => {
+		if (selectedTimelineItemType === "transition" && selectedTimelineItemId) {
+			setIsChatOpen(true);
+		}
+	}, [selectedTimelineItemType, selectedTimelineItemId]);
 
 	// Check if we have any clips (show editor as soon as clips are added, even if transcribing)
 	const { clipOrder } = useTranscriptStore();
@@ -261,8 +269,9 @@ const Editor = ({ tempId, id }: { tempId?: string; id?: string }) => {
 					</ResizablePanel>
 				</ResizablePanelGroup>
 
-				{/* RIGHT PANEL - AI Chat */}
+				{/* RIGHT PANEL - Contextual (AI Chat / Transition Settings / etc.) */}
 				<div
+					data-right-panel
 					className={`
 						flex flex-col flex-none bg-white border-l border-border shadow-sm overflow-hidden
 						${isMobile
@@ -276,13 +285,27 @@ const Editor = ({ tempId, id }: { tempId?: string; id?: string }) => {
 						transition: 'transform 400ms cubic-bezier(0.4, 0, 0.2, 1), margin 400ms cubic-bezier(0.4, 0, 0.2, 1)',
 					}}
 				>
-					<Chat />
+					{/* Contextual panel based on selection */}
+					{selectedTimelineItemType === "transition" && selectedTimelineItemId ? (
+						<TransitionSettings
+							transitionId={selectedTimelineItemId}
+							onBack={() => clearTimelineSelection()}
+						/>
+					) : (
+						<Chat />
+					)}
 				</div>
 
 				{/* Right toggle button - Desktop */}
 				{!isMobile && (
 					<button
-						onClick={() => setIsChatOpen(!isChatOpen)}
+						onClick={() => {
+							if (isChatOpen && selectedTimelineItemType === "transition") {
+								// Clear transition selection when closing panel
+								clearTimelineSelection();
+							}
+							setIsChatOpen(!isChatOpen);
+						}}
 						className="absolute top-3 z-50 flex items-center justify-center w-8 h-8 rounded-full bg-white border border-border shadow-md hover:bg-muted cursor-pointer transition-all"
 						style={{
 							right: isChatOpen ? 388 : 12,
@@ -291,6 +314,8 @@ const Editor = ({ tempId, id }: { tempId?: string; id?: string }) => {
 					>
 						{isChatOpen ? (
 							<ChevronRight className="w-4 h-4 text-gray-600" />
+						) : selectedTimelineItemType === "transition" ? (
+							<Layers className="w-4 h-4 text-gray-600" />
 						) : (
 							<Sparkles className="w-4 h-4 text-gray-600" />
 						)}

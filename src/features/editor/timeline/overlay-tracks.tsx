@@ -259,6 +259,13 @@ const OverlayTracks = ({ totalDurationMs }: OverlayTracksProps) => {
     playerRef.current.seekTo(targetFrame);
   }, [playerRef, totalDurationMs, fps, dragItemId, clearTimelineSelection]);
 
+  // Handle click on track label to seek to start (time 0)
+  const handleLabelClick = useCallback(() => {
+    if (!playerRef?.current) return;
+    playerRef.current.seekTo(0);
+    clearTimelineSelection();
+  }, [playerRef, clearTimelineSelection]);
+
   // Don't render if no overlay items or no duration (avoids division by zero)
   if (sortedTypes.length === 0 || totalDurationMs <= 0) {
     return null;
@@ -280,13 +287,38 @@ const OverlayTracks = ({ totalDurationMs }: OverlayTracksProps) => {
         return (
           <div
             key={type}
-            className="flex items-center h-12 border-b border-border/30 last:border-b-0"
+            className="flex items-center h-12 border-b border-border/30 last:border-b-0 cursor-pointer"
+            onClick={(e) => {
+              // Handle clicks on borders/gaps - only if not clicking on interactive elements
+              const target = e.target as HTMLElement;
+              if (target.closest('button')) return;
+              if (target.closest('.trim-handle')) return;
+              if (target.closest('.overlay-item')) return;
+              if (target.closest('.track-content')) return; // Let track-content handle its own clicks
+              if (target.closest('.cursor-pointer')?.querySelector('svg, span.truncate')) return; // Let label handle its own clicks
+              
+              // Calculate time based on track-content position
+              const trackContent = e.currentTarget.querySelector('.track-content') as HTMLElement;
+              if (!trackContent || !playerRef?.current || totalDurationMs <= 0) return;
+              
+              const rect = trackContent.getBoundingClientRect();
+              const x = e.clientX - rect.left;
+              const ratio = Math.max(0, Math.min(1, x / rect.width));
+              const targetMs = ratio * totalDurationMs;
+              const targetFrame = Math.round((targetMs / 1000) * fps);
+              
+              playerRef.current.seekTo(targetFrame);
+              clearTimelineSelection();
+            }}
           >
             {/* Track label */}
-            <div className={cn(
-              "flex items-center gap-1.5 px-3 w-20 shrink-0 text-xs font-medium",
-              config.color
-            )}>
+            <div 
+              className={cn(
+                "flex items-center gap-1.5 px-3 w-20 shrink-0 text-xs font-medium cursor-pointer hover:opacity-80 transition-opacity",
+                config.color
+              )}
+              onClick={handleLabelClick}
+            >
               <Icon className="w-3.5 h-3.5" />
               <span className="truncate">{config.label}</span>
             </div>

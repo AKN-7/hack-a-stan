@@ -14,7 +14,7 @@ import { PlayerRef } from "@remotion/player";
 import { create } from "zustand";
 
 // Timeline selection types
-type TimelineSelectionType = "transcript-clip" | "overlay-item" | null;
+export type TimelineSelectionType = "transcript-clip" | "overlay-item" | "transition" | null;
 
 interface ITimelineStore {
   duration: number;
