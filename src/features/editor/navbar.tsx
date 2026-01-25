@@ -30,6 +30,9 @@ import type { IDesign } from "@designcombo/types";
 import { useDownloadState } from "./store/use-download-state";
 import useTranscriptStore from "./store/use-transcript-store";
 import useStore from "./store/use-store";
+import useUploadStore from "./store/use-upload-store";
+import useEffectsStore from "./store/use-effects-store";
+import useChatStore from "@/features/chat/use-chat-store";
 import DownloadProgressModal from "./download-progress-modal";
 import AutosizeInput from "@/components/ui/autosize-input";
 import { debounce } from "lodash";
@@ -59,13 +62,36 @@ export default function Navbar({
 
   // Get transcript undo/redo functions and reset
   const { undo: transcriptUndo, redo: transcriptRedo, canUndo, canRedo, reset: resetTranscript } = useTranscriptStore();
-  const { playerRef, fps } = useStore();
+  const { playerRef, fps, setState: setEditorState } = useStore();
+  const { setUploads, setUploadsVideos, setUploadsAudios, setUploadsImages } = useUploadStore();
+  const { reset: resetEffects } = useEffectsStore();
+  const { clearMessages: clearChatMessages } = useChatStore();
   const [showResetDialog, setShowResetDialog] = useState(false);
 
   const handleReset = useCallback(() => {
+    // Clear transcript store (clips, words, etc.)
     resetTranscript();
+
+    // Clear chat/AI messages
+    clearChatMessages();
+
+    // Clear uploads
+    setUploads([]);
+    setUploadsVideos([]);
+    setUploadsAudios([]);
+    setUploadsImages([]);
+
+    // Clear effects
+    resetEffects();
+
+    // Clear DesignCombo state (overlays, text, images, etc.)
+    setEditorState({
+      trackItemsMap: {},
+      trackItemIds: [],
+    });
+
     setShowResetDialog(false);
-  }, [resetTranscript]);
+  }, [resetTranscript, clearChatMessages, setUploads, setUploadsVideos, setUploadsAudios, setUploadsImages, resetEffects, setEditorState]);
 
   const handleUndo = useCallback(() => {
     // Try transcript undo first (since it's the primary editing mode)

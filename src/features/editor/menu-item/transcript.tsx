@@ -5,14 +5,12 @@ import { Button } from "@/components/ui/button";
 import {
   Loader2,
   Trash2,
-  RotateCcw,
-  FileText,
-  AlertCircle,
   Clock,
   ChevronUp,
   ChevronDown,
-  Film,
   Plus,
+  Scissors,
+  RotateCcw,
 } from "lucide-react";
 import useTranscriptStore, { TranscriptWord } from "../store/use-transcript-store";
 import useStore from "../store/use-store";
@@ -51,8 +49,7 @@ export const Transcript = () => {
     getRenderSegments,
     getWordAtTime,
     reorderClips,
-    removeClip,
-    restoreClip,
+    hardRemoveClip,
   } = useTranscriptStore();
   const [currentWordId, setCurrentWordId] = useState<string | null>(null);
 
@@ -63,6 +60,7 @@ export const Transcript = () => {
   const [isSelecting, setIsSelecting] = useState(false);
   const selectionStartRef = useRef<string | null>(null);
   const wordRefs = useRef<Map<string, HTMLSpanElement>>(new Map());
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const unifiedTranscript = getUnifiedTranscript();
   const renderSegments = getRenderSegments();
@@ -241,37 +239,61 @@ export const Transcript = () => {
   // Check if any words are deleted
   const hasDeletedWords = unifiedTranscript.some((w) => w.isDeleted);
 
+  // Handle native text selection (drag to select like Google Docs)
+  const handleSelectionChange = useCallback(() => {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) return;
+
+    // Find all word spans that are within the selection
+    const selectedIds = new Set<string>();
+
+    wordRefs.current.forEach((element, wordId) => {
+      if (selection.containsNode(element, true)) {
+        // Check if this word belongs to a non-deleted clip
+        const word = unifiedTranscript.find(w => w.id === wordId);
+        if (word && !word.isDeleted) {
+          selectedIds.add(wordId);
+        }
+      }
+    });
+
+    if (selectedIds.size > 0) {
+      setSelectedWordIds(selectedIds);
+      // Set selection start for potential Shift+Click extension
+      const firstSelectedWord = unifiedTranscript.find(w => selectedIds.has(w.id));
+      if (firstSelectedWord) {
+        selectionStartRef.current = firstSelectedWord.id;
+      }
+    }
+  }, [unifiedTranscript]);
+
+  // Handle mouseup to capture selection
+  const handleMouseUp = useCallback(() => {
+    // Small delay to let selection finalize
+    setTimeout(() => {
+      handleSelectionChange();
+      // Clear the browser's visual selection after we've captured it
+      window.getSelection()?.removeAllRanges();
+    }, 10);
+  }, [handleSelectionChange]);
+
   return (
-    <div className="flex flex-1 flex-col h-full bg-white">
+    <div className="flex flex-1 flex-col h-full bg-white relative overflow-hidden">
       <ModalUpload />
       {/* Header */}
-      <div className="flex h-14 flex-none items-center justify-between px-3 md:px-4 border-b border-border">
-        <span className="text-base font-semibold text-foreground">Transcript</span>
-        <div className="flex items-center gap-1.5 md:gap-2">
-          {selectedWordIds.size > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleDeleteSelected}
-              className="h-8 px-2 md:px-3 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg font-medium text-xs md:text-sm"
-            >
-              <Trash2 className="w-4 h-4 md:mr-1.5" />
-              <span className="hidden md:inline">Delete ({selectedWordIds.size})</span>
-              <span className="md:hidden">{selectedWordIds.size}</span>
-            </Button>
-          )}
-          {hasDeletedWords && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleRestoreAll}
-              className="h-8 px-2 md:px-3 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg font-medium text-xs md:text-sm"
-            >
-              <RotateCcw className="w-4 h-4 md:mr-1.5" />
-              <span className="hidden md:inline">Restore</span>
-            </Button>
-          )}
-        </div>
+      <div className="flex h-12 flex-none items-center justify-between px-3 md:px-4 border-b border-border">
+        <span className="text-sm font-semibold text-foreground">Transcript</span>
+        {hasDeletedWords && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleRestoreAll}
+            className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg font-medium"
+          >
+            <RotateCcw className="w-3.5 h-3.5 mr-1" />
+            Restore
+          </Button>
+        )}
       </div>
 
       {/* Consolidated Status Bar */}
@@ -406,20 +428,25 @@ export const Transcript = () => {
 
       {/* Transcript Content - Clips as Separate Sections */}
       {clipOrder.length > 0 && clipOrder.some(id => clips[id]?.status === "ready") && (
-        <div className="flex-1 overflow-y-auto">
-          <p className="text-xs text-muted-foreground px-4 py-3 bg-muted/30">
-            Click to seek. Select words and press Delete to cut.
-          </p>
+        <div className="flex-1 overflow-y-auto overflow-x-hidden">
+          <div className="px-4 py-3 bg-gradient-to-r from-primary/5 via-primary/5 to-transparent border-b border-primary/10">
+            <p className="text-xs text-muted-foreground">
+              <span className="text-primary font-medium">Drag to select text</span> → press <kbd className="px-1.5 py-0.5 mx-1 bg-red-100 text-red-600 rounded text-[10px] font-semibold">Delete</kbd> to cut
+            </p>
+          </div>
 
-          {clipOrder.map((clipId, index) => {
+          {clipOrder
+            .filter((clipId) => {
+              const clip = clips[clipId];
+              // Filter out B-roll and music - those are managed in the timeline
+              return clip && clip.clipType !== "video_only" && clip.clipType !== "background_music";
+            })
+            .map((clipId, index) => {
             const clip = clips[clipId];
             if (!clip || clip.status !== "ready") return null;
 
             const clipWords = clip.words;
-            const activeWordCount = clipWords.filter(w => !w.isDeleted).length;
-            const clipDurationMs = clipWords.filter(w => !w.isDeleted).reduce((sum, w) => {
-              return sum + (w.endMs - w.startMs);
-            }, 0);
+            const clipDurationMs = clipWords.filter(w => !w.isDeleted).reduce((sum, w) => sum + (w.endMs - w.startMs), 0);
 
             const color = getClipColor(index);
             const isClipDeleted = clip.isDeleted;
@@ -461,98 +488,80 @@ export const Transcript = () => {
                     </span>
                   )}
 
-                  {/* Restore button for deleted clips */}
-                  {isClipDeleted ? (
+                  {/* Reorder & Delete Buttons */}
+                  <div className="flex gap-0.5">
                     <Button
                       variant="ghost"
-                      size="sm"
-                      className="h-8 md:h-7 px-2 md:px-3 text-xs font-medium text-green-600 hover:text-green-700 hover:bg-green-50 rounded-lg touch-target"
-                      onClick={() => restoreClip(clipId)}
+                      size="icon"
+                      className="h-8 w-8 md:h-7 md:w-7 rounded-lg hover:bg-muted"
+                      disabled={index === 0}
+                      onClick={() => {
+                        const newOrder = [...clipOrder];
+                        [newOrder[index - 1], newOrder[index]] = [newOrder[index], newOrder[index - 1]];
+                        reorderClips(newOrder);
+                      }}
                     >
-                      <RotateCcw className="w-3.5 h-3.5 md:mr-1.5" />
-                      <span className="hidden md:inline">Restore</span>
+                      <ChevronUp className="h-4 w-4" />
                     </Button>
-                  ) : (
-                    /* Reorder Buttons */
-                    <div className="flex gap-0.5">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 md:h-7 md:w-7 rounded-lg hover:bg-muted"
-                        disabled={index === 0}
-                        onClick={() => {
-                          const newOrder = [...clipOrder];
-                          [newOrder[index - 1], newOrder[index]] = [newOrder[index], newOrder[index - 1]];
-                          reorderClips(newOrder);
-                        }}
-                      >
-                        <ChevronUp className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 md:h-7 md:w-7 rounded-lg hover:bg-muted"
-                        disabled={index === clipOrder.length - 1}
-                        onClick={() => {
-                          const newOrder = [...clipOrder];
-                          [newOrder[index], newOrder[index + 1]] = [newOrder[index + 1], newOrder[index]];
-                          reorderClips(newOrder);
-                        }}
-                      >
-                        <ChevronDown className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 md:h-7 md:w-7 rounded-lg text-muted-foreground hover:text-red-500 hover:bg-red-50"
-                        onClick={() => removeClip(clipId)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 md:h-7 md:w-7 rounded-lg hover:bg-muted"
+                      disabled={index === clipOrder.length - 1}
+                      onClick={() => {
+                        const newOrder = [...clipOrder];
+                        [newOrder[index], newOrder[index + 1]] = [newOrder[index + 1], newOrder[index]];
+                        reorderClips(newOrder);
+                      }}
+                    >
+                      <ChevronDown className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 md:h-7 md:w-7 rounded-lg text-muted-foreground hover:text-red-500 hover:bg-red-50"
+                      onClick={() => hardRemoveClip(clipId)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </div>
 
-                {/* Delete reason if available */}
-                {isClipDeleted && clip.deleteReason && (
-                  <div className="px-4 py-2 bg-red-50 border-b border-red-100">
-                    <p className="text-xs text-red-600 italic">
-                      {clip.deleteReason}
-                    </p>
-                  </div>
-                )}
-
-                {/* Clip Words */}
-                <div className={cn(
-                  "px-4 py-3 select-none",
-                  isClipDeleted && "pointer-events-none"
-                )}>
+                {/* Clip Words - drag to select */}
+                <div
+                  className={cn(
+                    "px-4 py-3 overflow-hidden",
+                    isClipDeleted && "pointer-events-none select-none"
+                  )}
+                  onMouseUp={!isClipDeleted ? handleMouseUp : undefined}
+                >
                   <p className={cn(
-                    "text-sm leading-8",
+                    "text-sm leading-8 max-w-full",
                     isClipDeleted && "line-through text-red-700/70"
-                  )} style={{ wordWrap: "break-word", overflowWrap: "break-word" }}>
-                    {clipWords.map((word) => (
-                      <span
-                        key={word.id}
-                        ref={(el) => {
-                          if (el) wordRefs.current.set(word.id, el);
-                        }}
-                        onClick={(e) => !isClipDeleted && handleWordClick(word, e)}
-                        className={cn(
-                          "rounded px-0.5 py-0.5 transition-colors duration-100 inline",
-                          isClipDeleted
-                            ? "cursor-default"
-                            : "cursor-pointer",
-                          !isClipDeleted && word.isDeleted
-                            ? "line-through opacity-50 bg-red-100 text-red-700"
-                            : !isClipDeleted && currentWordId === word.id
-                            ? "bg-primary text-white font-medium"
-                            : !isClipDeleted && selectedWordIds.has(word.id)
-                            ? cn(color.light, color.text, "font-medium")
-                            : !isClipDeleted && "hover:bg-muted"
-                        )}
-                      >
-                        {word.text}{" "}
+                  )} style={{ wordWrap: "break-word", overflowWrap: "break-word", wordBreak: "break-word" }}>
+                    {clipWords.map((word, wordIndex) => (
+                      <span key={word.id}>
+                        <span
+                          ref={(el) => {
+                            if (el) wordRefs.current.set(word.id, el);
+                          }}
+                          onClick={(e) => !isClipDeleted && handleWordClick(word, e)}
+                          className={cn(
+                            "rounded px-0.5 py-0.5 transition-colors duration-100 inline",
+                            isClipDeleted
+                              ? "cursor-default"
+                              : "cursor-text",
+                            !isClipDeleted && word.isDeleted
+                              ? "line-through opacity-50 bg-red-100 text-red-700"
+                              : !isClipDeleted && currentWordId === word.id
+                              ? "bg-primary text-white font-medium"
+                              : !isClipDeleted && selectedWordIds.has(word.id)
+                              ? cn(color.light, color.text, "font-medium")
+                              : !isClipDeleted && "hover:bg-muted"
+                          )}
+                        >
+                          {word.text}{wordIndex < clipWords.length - 1 ? " " : ""}
+                        </span>
                       </span>
                     ))}
                   </p>
@@ -561,18 +570,6 @@ export const Transcript = () => {
             );
           })}
 
-          {/* Add clip button */}
-          <div className="p-4">
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full h-10 justify-center gap-2 border-2 border-dashed border-border hover:border-primary/50 hover:bg-primary/5 rounded-xl font-medium text-muted-foreground hover:text-primary transition-colors cursor-pointer"
-              onClick={() => setShowUploadModal(true)}
-            >
-              <Plus className="w-4 h-4" />
-              Add another clip
-            </Button>
-          </div>
         </div>
       )}
 
@@ -591,25 +588,56 @@ export const Transcript = () => {
           </div>
         )}
 
-      {/* Stats footer */}
-      {unifiedTranscript.length > 0 && (
-        <div className="px-3 md:px-4 py-2 md:py-3 border-t border-border bg-muted/30">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 md:gap-4 text-xs md:text-sm text-muted-foreground">
-              <span className="font-medium">
-                {unifiedTranscript.filter((w) => !w.isDeleted).length} words
+      {/* Fixed bottom action bar - swaps between Add Clip and Selection */}
+      {clipOrder.length > 0 && clipOrder.some(id => clips[id]?.status === "ready") && (
+        <div className="flex-none border-t border-border bg-white p-3">
+          {selectedWordIds.size > 0 ? (
+            <div className="flex items-center gap-2 h-10 px-4 rounded-xl bg-foreground text-background">
+              <span className="text-sm font-medium flex-1">
+                {selectedWordIds.size} selected
               </span>
+              <button
+                type="button"
+                className="h-7 px-3 text-sm font-medium bg-white hover:bg-gray-100 text-foreground rounded-lg flex items-center transition-colors"
+                onClick={handleDeleteSelected}
+              >
+                <Scissors className="w-3.5 h-3.5 mr-1.5" />
+                Cut
+              </button>
+              <button
+                type="button"
+                className="h-7 w-7 rounded-lg hover:bg-background/20 flex items-center justify-center text-sm transition-colors"
+                onClick={() => setSelectedWordIds(new Set())}
+              >
+                ×
+              </button>
+            </div>
+          ) : (
+            <Button
+              variant="outline"
+              className="w-full h-10 justify-center gap-2 border-2 border-dashed border-border hover:border-primary/50 hover:bg-primary/5 rounded-xl font-medium text-muted-foreground hover:text-primary transition-colors cursor-pointer"
+              onClick={() => setShowUploadModal(true)}
+            >
+              <Plus className="w-4 h-4" />
+              Add another clip
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* Stats bar */}
+      {unifiedTranscript.length > 0 && (
+        <div className="flex-none px-3 py-2 border-t border-border bg-muted/30">
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-3 text-muted-foreground">
+              <span>{unifiedTranscript.filter((w) => !w.isDeleted).length} words</span>
               {unifiedTranscript.filter((w) => w.isDeleted).length > 0 && (
-                <span className="text-red-500">
-                  {unifiedTranscript.filter((w) => w.isDeleted).length} cut
-                </span>
+                <span className="text-red-500">{unifiedTranscript.filter((w) => w.isDeleted).length} cut</span>
               )}
             </div>
-            <div className="flex items-center gap-1.5 md:gap-2 px-2 md:px-3 py-1 md:py-1.5 rounded-lg bg-primary/10 text-primary">
-              <Clock className="w-3 h-3 md:w-3.5 md:h-3.5" />
-              <span className="text-xs md:text-sm font-semibold">
-                {formatDuration(getTotalDurationMs())}
-              </span>
+            <div className="flex items-center gap-1.5 text-primary font-medium">
+              <Clock className="w-3 h-3" />
+              {formatDuration(getTotalDurationMs())}
             </div>
           </div>
         </div>

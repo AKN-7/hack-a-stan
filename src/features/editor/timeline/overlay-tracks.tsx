@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from "react";
-import { Image, Type, Music, Shapes, Trash2 } from "lucide-react";
+import { Image, Type, Music, Shapes, Trash2, Film } from "lucide-react";
 import useStore from "../store/use-store";
 import useTranscriptStore from "../store/use-transcript-store";
 import { useCurrentPlayerFrame } from "../hooks/use-current-frame";
@@ -11,6 +11,7 @@ import { EDIT_OBJECT, LAYER_DELETE } from "@designcombo/state";
 // Track type configuration
 const TRACK_CONFIG: Record<string, { icon: React.ElementType; label: string; color: string; bgColor: string; hoverBg: string }> = {
   image: { icon: Image, label: "B-Roll", color: "text-emerald-600", bgColor: "bg-emerald-500", hoverBg: "hover:bg-emerald-400" },
+  "video-broll": { icon: Film, label: "Video B-Roll", color: "text-teal-600", bgColor: "bg-teal-500", hoverBg: "hover:bg-teal-400" },
   text: { icon: Type, label: "Text", color: "text-blue-600", bgColor: "bg-blue-500", hoverBg: "hover:bg-blue-400" },
   audio: { icon: Music, label: "Audio", color: "text-purple-600", bgColor: "bg-purple-500", hoverBg: "hover:bg-purple-400" },
   shape: { icon: Shapes, label: "Shapes", color: "text-amber-600", bgColor: "bg-amber-500", hoverBg: "hover:bg-amber-400" },
@@ -61,15 +62,31 @@ const OverlayTracks = () => {
     return duration;
   }, [getTotalDurationMs, trackItemsMap]);
 
-  // Group items by type (excluding video - that's handled by transcript track)
+  // Group items by type (excluding main video - that's handled by transcript track)
   const groupedTracks = useMemo((): GroupedTracks => {
     const groups: GroupedTracks = {};
 
     Object.entries(trackItemsMap).forEach(([id, item]) => {
-      // Skip video items - they're handled by transcript
-      if (item.type === "video") return;
       // Skip caption items - they're auto-generated
       if (item.type === "caption") return;
+
+      // Handle video items specially - only show B-roll videos (with isBroll metadata)
+      if (item.type === "video") {
+        if (item.metadata?.isBroll) {
+          // This is a B-roll video - put it in the video-broll group
+          if (!groups["video-broll"]) {
+            groups["video-broll"] = [];
+          }
+          groups["video-broll"].push({ ...item, id } as TrackItem);
+          console.log(`[OverlayTracks] Found B-roll video in DesignCombo:`, {
+            id,
+            from: item.display?.from,
+            to: item.display?.to,
+          });
+        }
+        // Skip non-B-roll videos - they're handled by transcript track
+        return;
+      }
 
       if (!groups[item.type]) {
         groups[item.type] = [];
@@ -318,11 +335,13 @@ const OverlayTracks = () => {
                 const isHovered = hoveredItemId === item.id;
 
                 // Get item preview text
-                const previewText = item.details?.text
-                  ? String(item.details.text).substring(0, 15)
-                  : item.details?.src
-                    ? "Image"
-                    : type;
+                const previewText = type === "video-broll"
+                  ? "Video B-Roll"
+                  : item.details?.text
+                    ? String(item.details.text).substring(0, 15)
+                    : item.details?.src
+                      ? "Image"
+                      : type;
 
                 return (
                   <div

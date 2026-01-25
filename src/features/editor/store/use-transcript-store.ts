@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { toast } from "sonner";
 import { dispatch } from "@designcombo/events";
-import { ADD_TEXT } from "@designcombo/state";
+import { ADD_TEXT, ADD_VIDEO } from "@designcombo/state";
 import { nanoid } from "nanoid";
 // NOTE: We no longer dispatch to DesignCombo for video clips.
 // The transcript store IS the source of truth.
@@ -1601,10 +1601,36 @@ const useTranscriptStore = create<ITranscriptStore>()(
 
           setClipTranscript(clipId, words, data.text || "", data.durationMs);
 
-          // NOTE: We do NOT add video blocks to DesignCombo anymore.
-          // The transcript store IS the source of truth for video clips.
-          // The composition renders directly from getRenderSegments().
-          // The timeline UI should render clips from this store, not DesignCombo.
+          // NOTE: We do NOT add video blocks to DesignCombo for MAIN video clips.
+          // The transcript store IS the source of truth for video clips with speech.
+          // HOWEVER: B-roll videos (no speech) DO get added to DesignCombo
+          // so users can drag/trim them in the overlay tracks.
+          if (words.length === 0 && clip.clipType === "video_with_audio") {
+            // This is a B-roll video (video with no speech)
+            // Add it to DesignCombo so it appears in overlay tracks and can be edited
+            const brollDuration = data.durationMs || 10000;
+            const brollId = `broll-${clipId}`;
+
+            console.log(`[Transcript] Adding B-roll video to DesignCombo: ${brollId}, duration: ${brollDuration}ms`);
+
+            dispatch(ADD_VIDEO, {
+              payload: {
+                id: brollId,
+                details: {
+                  src: clip.url,
+                },
+                display: {
+                  from: 0, // Start at beginning - user can drag to reposition
+                  to: Math.min(brollDuration, 10000), // Cap at 10s initially
+                },
+                metadata: {
+                  isBroll: true, // Mark as B-roll so overlay tracks shows it
+                  sourceClipId: clipId, // Reference back to transcript store clip
+                },
+              },
+              options: {},
+            });
+          }
         } catch (error) {
           console.error(`Transcription failed for clip ${clipId}:`, error);
           setClipStatus(clipId, "error", String(error));
