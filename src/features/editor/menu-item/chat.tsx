@@ -32,7 +32,7 @@ import {
 import { MessageMarkdown } from "@/components/message-markdown";
 import { ShimmeringText } from "@/components/ui/shimmering-text";
 import useChatStore, { ChatMessage, ToolCall } from "@/features/chat/use-chat-store";
-import useTranscriptStore, { MagicProcessingResult } from "@/features/editor/store/use-transcript-store";
+import useTranscriptStore, { MagicProcessingResult, ProcessingEvent } from "@/features/editor/store/use-transcript-store";
 import useStore from "@/features/editor/store/use-store";
 import { executeToolCall } from "@/features/chat/tool-executor";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -105,6 +105,7 @@ export function Chat() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const quickActionsRef = useRef<HTMLDivElement>(null);
+  const eventsEndRef = useRef<HTMLDivElement>(null);
 
   const { messages, isLoading, addMessage, updateMessage, appendToolCall, updateToolCallResult, setLoading, setError, clearMessages } =
     useChatStore();
@@ -112,7 +113,7 @@ export function Chat() {
   const editorStore = useStore();
 
   // Get magic processing result for display
-  const { magicProcessingResult, clearMagicProcessingResult, isProcessing, processingStatus, processingStartTime, processingStep } = useTranscriptStore();
+  const { magicProcessingResult, clearMagicProcessingResult, isProcessing, processingStatus, processingStartTime, processingStep, processingEvents } = useTranscriptStore();
 
   // Get rotating hint during processing
   const displayStatus = useRotatingHint(isProcessing, processingStatus);
@@ -138,6 +139,11 @@ export function Chat() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, magicProcessingResult]);
+
+  // Auto-scroll events feed when new events come in
+  useEffect(() => {
+    eventsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [processingEvents]);
 
   // Auto-scroll quick actions carousel - smooth continuous scroll
   useEffect(() => {
@@ -539,24 +545,87 @@ export function Chat() {
               </div>
             )}
 
-            {/* Magic processing in progress */}
+            {/* Magic processing in progress - Live Events Feed */}
             {isProcessing && (
               <div className="w-full rounded-xl border border-primary/20 bg-gradient-to-br from-primary/5 to-purple-500/5 p-4">
-                <div className="flex items-center gap-3">
+                {/* Header */}
+                <div className="flex items-center gap-3 mb-3">
                   <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                    <Loader2 className="h-4 w-4 text-primary animate-spin" />
+                    <Wand2 className="h-4 w-4 text-primary animate-pulse" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="text-sm font-semibold text-foreground">Magic Processing...</div>
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm font-semibold text-foreground">Magic Processing</div>
                       <div className="text-xs font-medium text-primary tabular-nums">
                         {elapsedSeconds}s
                       </div>
                     </div>
-                    <div className="text-xs text-muted-foreground truncate transition-all duration-300">
-                      {displayStatus}
-                    </div>
                   </div>
+                </div>
+
+                {/* Live Events Feed */}
+                <div className="space-y-1.5 max-h-[180px] overflow-y-auto scrollbar-thin">
+                  {processingEvents.length === 0 ? (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      <span>Starting analysis...</span>
+                    </div>
+                  ) : (
+                    processingEvents.map((event, index) => {
+                      const isLast = index === processingEvents.length - 1;
+                      // For pass_start: only show spinner if it's the last event, otherwise show check
+                      const showSpinner = event.type === "pass_start" && isLast;
+                      const showCheck = event.type === "pass_start" && !isLast;
+
+                      return (
+                        <div
+                          key={event.id}
+                          className={cn(
+                            "flex items-start gap-2 text-xs",
+                            isLast && "animate-in slide-in-from-left-2 fade-in duration-300",
+                            isLast ? "text-foreground" : "text-muted-foreground"
+                          )}
+                        >
+                          {/* Icon based on event type */}
+                          {showSpinner && (
+                            <Loader2 className="h-3 w-3 mt-0.5 shrink-0 animate-spin text-primary" />
+                          )}
+                          {showCheck && (
+                            <Check className="h-3 w-3 mt-0.5 shrink-0 text-green-500" />
+                          )}
+                          {event.type === "pass_complete" && (
+                            <Check className="h-3 w-3 mt-0.5 shrink-0 text-green-500" />
+                          )}
+                          {event.type === "clip_removed" && (
+                            <Trash2 className="h-3 w-3 mt-0.5 shrink-0 text-orange-500" />
+                          )}
+                          {event.type === "words_cut" && (
+                            <Scissors className="h-3 w-3 mt-0.5 shrink-0 text-blue-500" />
+                          )}
+                          {event.type === "order_found" && (
+                            <ArrowUpDown className="h-3 w-3 mt-0.5 shrink-0 text-purple-500" />
+                          )}
+                          {event.type === "hook_generated" && (
+                            <Sparkles className="h-3 w-3 mt-0.5 shrink-0 text-yellow-500" />
+                          )}
+                          {event.type === "emphasis_found" && (
+                            <Search className="h-3 w-3 mt-0.5 shrink-0 text-cyan-500" />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <span className={cn(isLast && "font-medium")}>
+                              {event.message}
+                            </span>
+                            {event.detail && (
+                              <span className="text-muted-foreground ml-1">
+                                — {event.detail}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                  <div ref={eventsEndRef} />
                 </div>
 
                 {/* Progress steps indicator */}
@@ -565,7 +634,7 @@ export function Chat() {
                     <div key={step} className="flex-1 flex items-center gap-1">
                       <div
                         className={cn(
-                          "h-1.5 flex-1 rounded-full transition-all duration-300",
+                          "h-1 flex-1 rounded-full transition-all duration-300",
                           processingStep >= step
                             ? "bg-primary"
                             : "bg-primary/20"
@@ -574,10 +643,10 @@ export function Chat() {
                     </div>
                   ))}
                 </div>
-                <div className="mt-1.5 flex justify-between text-[10px] text-muted-foreground">
-                  <span className={cn(processingStep >= 1 && "text-primary font-medium")}>Filler words</span>
-                  <span className={cn(processingStep >= 2 && "text-primary font-medium")}>AI analysis</span>
-                  <span className={cn(processingStep >= 3 && "text-primary font-medium")}>Pacing</span>
+                <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
+                  <span className={cn(processingStep >= 1 && "text-primary font-medium")}>Clean</span>
+                  <span className={cn(processingStep >= 2 && "text-primary font-medium")}>Analyze</span>
+                  <span className={cn(processingStep >= 3 && "text-primary font-medium")}>Polish</span>
                 </div>
               </div>
             )}

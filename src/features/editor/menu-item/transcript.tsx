@@ -11,6 +11,9 @@ import {
   Plus,
   Scissors,
   RotateCcw,
+  Pencil,
+  Check,
+  X,
 } from "lucide-react";
 import useTranscriptStore, { TranscriptWord } from "../store/use-transcript-store";
 import useStore from "../store/use-store";
@@ -59,8 +62,10 @@ interface ClipItemProps {
   };
   currentWordId: string | null;
   selectedWordIds: Set<string>;
+  editingWordId: string | null;
   wordRefs: React.MutableRefObject<Map<string, HTMLSpanElement>>;
   handleWordClick: (word: TranscriptWord, event: React.MouseEvent) => void;
+  handleWordDoubleClick: (word: TranscriptWord) => void;
   handleMouseUp: () => void;
   hardRemoveClip: (clipId: string) => void;
 }
@@ -71,8 +76,10 @@ const ClipItem = ({
   clip,
   currentWordId,
   selectedWordIds,
+  editingWordId,
   wordRefs,
   handleWordClick,
+  handleWordDoubleClick,
   handleMouseUp,
   hardRemoveClip,
 }: ClipItemProps) => {
@@ -179,13 +186,19 @@ const ClipItem = ({
                   if (el) wordRefs.current.set(word.id, el);
                 }}
                 onClick={(e) => !isClipDeleted && handleWordClick(word, e)}
+                onDoubleClick={() => !isClipDeleted && !word.isDeleted && handleWordDoubleClick(word)}
                 className={cn(
                   "rounded px-0.5 py-0.5 transition-colors duration-100 inline",
                   isClipDeleted
                     ? "cursor-default"
                     : "cursor-text",
-                  !isClipDeleted && word.isDeleted
+                  // Deleted words: strikethrough + if selected show selection ring
+                  !isClipDeleted && word.isDeleted && selectedWordIds.has(word.id)
+                    ? "line-through bg-amber-100 text-amber-700 ring-2 ring-amber-400 font-medium"
+                    : !isClipDeleted && word.isDeleted
                     ? "line-through opacity-50 bg-red-100 text-red-700"
+                    : !isClipDeleted && editingWordId === word.id
+                    ? "bg-blue-500 text-white font-medium ring-2 ring-blue-300"
                     : !isClipDeleted && currentWordId === word.id
                     ? "bg-primary text-white font-medium"
                     : !isClipDeleted && selectedWordIds.has(word.id)
@@ -209,12 +222,14 @@ export const Transcript = () => {
     clipOrder,
     getUnifiedTranscript,
     deleteWords,
+    restoreWord,
     restoreAllWords,
     getTotalDurationMs,
     getRenderSegments,
     getWordAtTime,
     reorderClips,
     hardRemoveClip,
+    editWord,
   } = useTranscriptStore();
   const [currentWordId, setCurrentWordId] = useState<string | null>(null);
 
@@ -226,6 +241,11 @@ export const Transcript = () => {
   const selectionStartRef = useRef<string | null>(null);
   const wordRefs = useRef<Map<string, HTMLSpanElement>>(new Map());
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Edit mode state
+  const [editingWordId, setEditingWordId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const editInputRef = useRef<HTMLInputElement>(null);
 
   const unifiedTranscript = getUnifiedTranscript();
   const renderSegments = getRenderSegments();
@@ -394,12 +414,55 @@ export const Transcript = () => {
     }
   }, [selectedWordIds, deleteWords, seekToStart]);
 
+  // Handle restore selected words
+  const handleRestoreSelected = useCallback(() => {
+    if (selectedWordIds.size > 0) {
+      for (const wordId of selectedWordIds) {
+        restoreWord(wordId);
+      }
+      setSelectedWordIds(new Set());
+      seekToStart();
+    }
+  }, [selectedWordIds, restoreWord, seekToStart]);
+
+  // Check if all selected words are deleted (for showing Restore vs Cut)
+  const allSelectedAreDeleted = selectedWordIds.size > 0 &&
+    Array.from(selectedWordIds).every(wordId => {
+      const word = unifiedTranscript.find(w => w.id === wordId);
+      return word?.isDeleted;
+    });
+
   // Handle restore all
   const handleRestoreAll = useCallback(() => {
     restoreAllWords();
     setSelectedWordIds(new Set());
     seekToStart();
   }, [restoreAllWords, seekToStart]);
+
+  // Handle double-click to edit a word
+  const handleWordDoubleClick = useCallback((word: TranscriptWord) => {
+    if (word.isDeleted) return;
+    setEditingWordId(word.id);
+    setEditText(word.text);
+    setSelectedWordIds(new Set()); // Clear selection when editing
+    // Focus input after render
+    setTimeout(() => editInputRef.current?.focus(), 50);
+  }, []);
+
+  // Save edited word
+  const handleSaveEdit = useCallback(() => {
+    if (editingWordId && editText.trim()) {
+      editWord(editingWordId, editText.trim());
+    }
+    setEditingWordId(null);
+    setEditText("");
+  }, [editingWordId, editText, editWord]);
+
+  // Cancel edit
+  const handleCancelEdit = useCallback(() => {
+    setEditingWordId(null);
+    setEditText("");
+  }, []);
 
   // Check if any words are deleted
   const hasDeletedWords = unifiedTranscript.some((w) => w.isDeleted);
@@ -409,14 +472,13 @@ export const Transcript = () => {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed) return;
 
-    // Find all word spans that are within the selection
+    // Find all word spans that are within the selection (including deleted words for restore)
     const selectedIds = new Set<string>();
 
     wordRefs.current.forEach((element, wordId) => {
       if (selection.containsNode(element, true)) {
-        // Check if this word belongs to a non-deleted clip
         const word = unifiedTranscript.find(w => w.id === wordId);
-        if (word && !word.isDeleted) {
+        if (word) {
           selectedIds.add(wordId);
         }
       }
@@ -635,8 +697,10 @@ export const Transcript = () => {
                     clip={clip}
                     currentWordId={currentWordId}
                     selectedWordIds={selectedWordIds}
+                    editingWordId={editingWordId}
                     wordRefs={wordRefs}
                     handleWordClick={handleWordClick}
+                    handleWordDoubleClick={handleWordDoubleClick}
                     handleMouseUp={handleMouseUp}
                     hardRemoveClip={hardRemoveClip}
                   />
@@ -662,22 +726,65 @@ export const Transcript = () => {
           </div>
         )}
 
-      {/* Fixed bottom action bar - swaps between Add Clip and Selection */}
+      {/* Fixed bottom action bar - swaps between Add Clip, Selection, and Edit */}
       {clipOrder.length > 0 && clipOrder.some(id => clips[id]?.status === "ready") && (
         <div className="flex-none border-t border-border bg-white p-3">
-          {selectedWordIds.size > 0 ? (
+          {editingWordId ? (
+            // Edit mode UI
+            <div className="flex items-center gap-2 h-10 px-4 rounded-xl bg-blue-500 text-white">
+              <Pencil className="w-4 h-4 shrink-0" />
+              <input
+                ref={editInputRef}
+                type="text"
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleSaveEdit();
+                  if (e.key === "Escape") handleCancelEdit();
+                }}
+                className="flex-1 bg-white/20 text-white placeholder-white/60 px-2 py-1 rounded-lg text-sm font-medium outline-none focus:bg-white/30"
+                placeholder="Edit word..."
+              />
+              <button
+                type="button"
+                className="h-7 w-7 bg-white hover:bg-gray-100 text-blue-600 rounded-lg flex items-center justify-center transition-colors"
+                onClick={handleSaveEdit}
+              >
+                <Check className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                className="h-7 w-7 rounded-lg hover:bg-white/20 flex items-center justify-center transition-colors"
+                onClick={handleCancelEdit}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          ) : selectedWordIds.size > 0 ? (
+            // Selection mode UI - show Restore if all selected are deleted, otherwise Cut
             <div className="flex items-center gap-2 h-10 px-4 rounded-xl bg-foreground text-background">
               <span className="text-sm font-medium flex-1">
                 {selectedWordIds.size} selected
               </span>
-              <button
-                type="button"
-                className="h-7 px-3 text-sm font-medium bg-white hover:bg-gray-100 text-foreground rounded-lg flex items-center transition-colors"
-                onClick={handleDeleteSelected}
-              >
-                <Scissors className="w-3.5 h-3.5 mr-1.5" />
-                Cut
-              </button>
+              {allSelectedAreDeleted ? (
+                <button
+                  type="button"
+                  className="h-7 px-3 text-sm font-medium bg-white hover:bg-gray-100 text-foreground rounded-lg flex items-center transition-colors"
+                  onClick={handleRestoreSelected}
+                >
+                  <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                  Restore
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="h-7 px-3 text-sm font-medium bg-white hover:bg-gray-100 text-foreground rounded-lg flex items-center transition-colors"
+                  onClick={handleDeleteSelected}
+                >
+                  <Scissors className="w-3.5 h-3.5 mr-1.5" />
+                  Cut
+                </button>
+              )}
               <button
                 type="button"
                 className="h-7 w-7 rounded-lg hover:bg-background/20 flex items-center justify-center text-sm transition-colors"
@@ -687,6 +794,7 @@ export const Transcript = () => {
               </button>
             </div>
           ) : (
+            // Default: Add clip button
             <Button
               variant="outline"
               className="w-full h-10 justify-center gap-2 border-2 border-dashed border-border hover:border-primary/50 hover:bg-primary/5 rounded-xl font-medium text-muted-foreground hover:text-primary transition-colors cursor-pointer"

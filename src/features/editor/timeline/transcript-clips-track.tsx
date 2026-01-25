@@ -327,15 +327,15 @@ const TranscriptClipsTrack = () => {
 
         // Only show trim badge if user explicitly trimmed (not just gap optimization from magic)
         const isTrimmed = block.hasUserTrim && block.fullDurationMs > block.durationMs;
-        // Use clip's colorIndex for persistent colors across reordering
+        // Use clip's colorIndex for persistent colors across reordering (stable fallback from clipId hash)
         const clipData = clips[block.clipId];
-        const style = getClipStyle(clipData?.colorIndex ?? index);
+        const style = getClipStyle(clipData?.colorIndex ?? getStableColorIndex(block.clipId));
 
         return (
           <div
             key={block.clipId}
             className={cn(
-              "relative h-14 rounded-2xl flex items-center transition-all duration-200 ease-out",
+              "relative h-14 rounded-2xl flex items-center transition-all duration-200 ease-out flex-shrink-0",
               isReady && !isTrimming ? "cursor-pointer" : "cursor-default",
               isDragging
                 ? "opacity-50 scale-95 border-2 border-dashed border-muted-foreground/40 bg-muted"
@@ -350,8 +350,8 @@ const TranscriptClipsTrack = () => {
               isSelected && "ring-2 ring-primary ring-offset-2 ring-offset-background shadow-lg"
             )}
             style={{
-              width: `${Math.max(12, widthPercent)}%`,
-              minWidth: "120px",
+              width: `${Math.max(3, widthPercent)}%`,
+              minWidth: "40px",
             }}
             draggable={isReady && !isTrimming}
             onClick={() => {

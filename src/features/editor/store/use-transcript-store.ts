@@ -126,6 +126,24 @@ export interface MagicProcessingResult {
   completedAt: number; // timestamp
 }
 
+// Live processing event for real-time UI feedback
+export type ProcessingEventType =
+  | "pass_start"      // Started a processing pass
+  | "pass_complete"   // Completed a processing pass
+  | "clip_removed"    // Removed a duplicate clip
+  | "words_cut"       // Cut words from script
+  | "order_found"     // Found optimal clip order
+  | "hook_generated"  // Generated text hook
+  | "emphasis_found"; // Found emphasis points
+
+export interface ProcessingEvent {
+  id: string;
+  type: ProcessingEventType;
+  message: string;
+  detail?: string;
+  timestamp: number;
+}
+
 interface ITranscriptStore {
   // Per-clip transcripts
   clips: Record<string, ClipTranscript>;
@@ -147,6 +165,11 @@ interface ITranscriptStore {
   _hasRunMagicProcessing: boolean; // Prevents running twice
   magicProcessingResult: MagicProcessingResult | null; // Latest result for chat display
   clearMagicProcessingResult: () => void;
+
+  // Live processing events for real-time UI feedback
+  processingEvents: ProcessingEvent[];
+  addProcessingEvent: (type: ProcessingEventType, message: string, detail?: string) => void;
+  clearProcessingEvents: () => void;
 
   // AI-detected emphasis points for zoom effects
   emphasisPoints: EmphasisPoint[];
@@ -276,7 +299,23 @@ const useTranscriptStore = create<ITranscriptStore>()(
       _hasRunMagicProcessing: false,
       magicProcessingResult: null,
       clearMagicProcessingResult: () => set({ magicProcessingResult: null }),
-      resetMagicProcessing: () => set({ _hasRunMagicProcessing: false, magicProcessingResult: null, emphasisPoints: [], textHook: null, processingStep: 0, processingStartTime: null }),
+      resetMagicProcessing: () => set({ _hasRunMagicProcessing: false, magicProcessingResult: null, emphasisPoints: [], textHook: null, processingStep: 0, processingStartTime: null, processingEvents: [] }),
+
+      // Live processing events
+      processingEvents: [],
+      addProcessingEvent: (type: ProcessingEventType, message: string, detail?: string) => {
+        const event: ProcessingEvent = {
+          id: nanoid(8),
+          type,
+          message,
+          detail,
+          timestamp: Date.now(),
+        };
+        set((state) => ({
+          processingEvents: [...state.processingEvents, event],
+        }));
+      },
+      clearProcessingEvents: () => set({ processingEvents: [] }),
 
       // AI-detected emphasis points for zoom effects
       emphasisPoints: [],
@@ -993,7 +1032,6 @@ const useTranscriptStore = create<ITranscriptStore>()(
         });
 
         console.log(`[Transcript] Restored clip ${clipIndex} (${clipId})`);
-        toast.success(`Clip ${clipIndex} restored`);
       },
 
       // Permanently remove a clip from the store
@@ -1742,25 +1780,29 @@ const useTranscriptStore = create<ITranscriptStore>()(
         let removedClipIds: string[] = [];
         let wordCuts: Array<{ clipId: string; text: string; reason: string }> = [];
 
+        const { addProcessingEvent, clearProcessingEvents } = get();
+        clearProcessingEvents(); // Clear any previous events
+
         try {
           // Step 1: Remove basic filler words (um, uh, like, etc.)
           set({ processingStatus: "Removing filler words...", processingStep: 1 });
+          addProcessingEvent("pass_start", "Scanning for filler words...");
           const fillerCount = autoRemoveFillerWords();
+          if (fillerCount > 0) {
+            addProcessingEvent("words_cut", `Removed ${fillerCount} filler words`, "ums, uhs, likes, you knows");
+          }
           console.log(`[Auto-Magic] Removed ${fillerCount} filler words`);
 
-          // Step 2: AI-powered CROSS-TRANSCRIPT analysis
-          // This is where the magic happens - AI sees ALL clips together and makes decisions about:
-          // - Which entire clips to remove (bad takes)
-          // - Which words/phrases to cut (duplicates, stammering, false starts)
-          // - Optimal clip ordering for narrative flow
-          set({ processingStatus: "AI analyzing clips...", processingStep: 2 });
+          // Step 2: AI-powered MULTI-PASS analysis
+          // Pass 1: Understand content + Dedupe (identify duplicate takes)
+          // Pass 2: Order (arrange clips for best narrative flow)
+          // Pass 3: Refine + Hooks (tighten script, generate hook, find emphasis)
+          set({ processingStatus: "Understanding content...", processingStep: 2 });
           try {
             // Build clip data for AI analysis - EXCLUDE video_only clips (B-roll)
-            // B-roll clips have no transcript and shouldn't be analyzed for content
             const clipData = clipOrder
               .filter(clipId => {
                 const clip = clips[clipId];
-                // Skip video_only clips - they're B-roll, not content to analyze
                 return clip && clip.clipType !== "video_only";
               })
               .map((clipId, index) => {
@@ -1769,7 +1811,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
                 return {
                   clipId,
                   clipIndex: index + 1,
-                  clipType: clip.clipType || "video_with_audio", // Include type for context
+                  clipType: clip.clipType || "video_with_audio",
                   text: activeWords.map(w => w.text).join(" "),
                   words: activeWords.map(w => ({
                     id: w.id,
@@ -1780,173 +1822,204 @@ const useTranscriptStore = create<ITranscriptStore>()(
                 };
               });
 
-            // Call AI analysis API with all clips
-            console.log("[Auto-Magic] Sending clips to AI for analysis:", clipData.map(c => ({
-              clipId: c.clipId,
-              clipIndex: c.clipIndex,
-              wordCount: c.words.length,
-              preview: c.text.substring(0, 100),
-            })));
+            console.log("[Auto-Magic] Starting 3-pass analysis for", clipData.length, "clips");
+            addProcessingEvent("pass_start", "AI analyzing your content...", `${clipData.length} clips to process`);
 
-            const response = await fetch("/api/analyze-cuts", {
+            // ==================== PASS 1: Understand + Dedupe ====================
+            set({ processingStatus: "Understanding content and finding duplicates..." });
+            addProcessingEvent("pass_start", "Pass 1: Understanding content");
+            const pass1Response = await fetch("/api/analyze-cuts", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ clips: clipData }),
+              body: JSON.stringify({ clips: clipData, pass: 1 }),
             });
 
-            if (!response.ok) {
-              const errorText = await response.text();
-              console.error("[Auto-Magic] AI API error:", response.status, errorText);
-              throw new Error(`AI analysis failed: ${response.status}`);
+            if (!pass1Response.ok) {
+              throw new Error(`Pass 1 failed: ${pass1Response.status}`);
             }
 
-            const result = await response.json();
-            console.log("[Auto-Magic] AI analysis result:", {
-              suggestedOrder: result.suggestedOrder,
-              clipsToRemove: result.clipsToRemove,
-              wordCutsCount: result.wordCuts?.length || 0,
-              wordIdsToDelete: result.wordIdsToDelete?.length || 0,
-              reasoning: result.reasoning,
+            const pass1Result = await pass1Response.json();
+            console.log("[Auto-Magic] Pass 1 result:", {
+              understanding: pass1Result.understanding?.substring(0, 100),
+              clipsToRemove: pass1Result.clipsToRemove?.length || 0,
+              uniqueClipIds: pass1Result.uniqueClipIds?.length || 0,
             });
 
-            if (result.success) {
-
-              // Step 2a: Remove entire clips that AI identified as bad takes
-              if (result.clipsToRemove && result.clipsToRemove.length > 0) {
-                set({ processingStatus: `Removing ${result.clipsToRemove.length} duplicate/bad takes...` });
-                for (const clipToRemove of result.clipsToRemove) {
-                  // Handle both old format (string) and new format (object with clipId, clipIndex, reason)
-                  const clipId = typeof clipToRemove === 'string' ? clipToRemove : clipToRemove.clipId;
-                  const clipIndex = typeof clipToRemove === 'string'
-                    ? clipOrder.indexOf(clipToRemove) + 1
-                    : clipToRemove.clipIndex;
-                  const reason = typeof clipToRemove === 'string'
-                    ? 'Duplicate take'
-                    : clipToRemove.reason;
-
-                  // Verify the clip exists before removing
-                  const clipToCheck = get().clips[clipId];
-                  if (clipToCheck) {
-                    // NEVER remove video_only clips - they're B-roll, not bad takes
-                    if (clipToCheck.clipType === "video_only") {
-                      console.log(`[Auto-Magic] Preserving B-roll clip ${clipIndex} - ${clipId} (video_only)`);
-                      continue;
-                    }
-                    removeClip(clipId, `Clip ${clipIndex}: ${reason}`);
-                    clipsRemoved++;
-                    removedClipIds.push(clipId);
-                    console.log(`[Auto-Magic] Removed clip ${clipIndex} - ${clipId}: ${reason}`);
-                  }
-                }
-              }
-
-              // Step 2b: Delete specific words (duplicates, stammering, false starts)
-              if (result.wordIdsToDelete && result.wordIdsToDelete.length > 0) {
-                set({ processingStatus: `Cutting ${result.wordIdsToDelete.length} duplicate/stammer words...` });
-                deleteWords(result.wordIdsToDelete);
-                aiCutsCount = result.wordIdsToDelete.length;
-                console.log(`[Auto-Magic] AI cut ${aiCutsCount} words across ${result.wordCuts?.length || 0} sections`);
-                // Capture word cuts for display
-                if (result.wordCuts) {
-                  wordCuts = result.wordCuts.map((cut: any) => ({
-                    clipId: cut.clipId,
-                    text: cut.text,
-                    reason: cut.reason,
-                  }));
-                }
-                result.wordCuts?.forEach((cut: any) => {
-                  console.log(`  - Clip ${cut.clipId}: "${cut.text}" (${cut.reason})`);
-                });
-              }
-
-              // Step 2c: Store AI's suggested order for later application
-              if (result.suggestedOrder && result.suggestedOrder.length > 0) {
-                aiSuggestedOrder = result.suggestedOrder;
-                aiReasoning = result.reasoning || "AI-optimized narrative flow";
-              }
-
-              // Step 2d: Store emphasis points for zoom effects
-              if (result.emphasisPoints && result.emphasisPoints.length > 0) {
-                set({ processingStatus: `Found ${result.emphasisPoints.length} emphasis moments for zoom effects...` });
-                const emphasisPointsMapped: EmphasisPoint[] = result.emphasisPoints.map((ep: any) => {
-                  // Find the word to get its startMs
-                  const clip = clips[ep.clipId];
-                  const word = clip?.words.find((w: TranscriptWord) => w.id === ep.wordId);
-                  return {
-                    clipId: ep.clipId,
-                    wordId: ep.wordId,
-                    startMs: word?.startMs || 0,
-                    reason: ep.reason,
-                    text: ep.text,
-                  };
-                });
-                set({ emphasisPoints: emphasisPointsMapped });
-                console.log(`[Auto-Magic] Found ${emphasisPointsMapped.length} emphasis points for zoom effects`);
-                emphasisPointsMapped.forEach((ep: EmphasisPoint) => {
-                  console.log(`  - "${ep.text}" at ${ep.startMs}ms (${ep.reason})`);
-                });
-              }
-
-              // Step 2e: Create text hook as a proper timeline item (editable/moveable)
-              if (result.textHook && result.textHook.length > 0) {
-                aiTextHook = result.textHook;
-                set({ processingStatus: "Adding attention-grabbing text hook..." });
-
-                // Get editor store for video dimensions
-                try {
-                  const editorStore = await getEditorStore();
-                  const { size } = editorStore.getState();
-                  const hookId = `text-hook-${nanoid(8)}`;
-
-                  // Build payload for text hook - rounded pill design with big text
-                  const hookWidth = Math.round(size.width * 0.75); // 75% width for bigger text
-                  const hookPayload = {
-                    id: hookId,
-                    type: "text",
-                    display: {
-                      from: 0,
-                      to: 4000, // 4 seconds
-                    },
-                    details: {
-                      text: result.textHook,
-                      fontSize: 56,
-                      fontFamily: "Inter-Bold",
-                      color: "#000000",
-                      backgroundColor: "#ffffff",
-                      textAlign: "center",
-                      width: hookWidth,
-                      height: 120, // Height for rounded pill with big text + vertical padding
-                      top: Math.round(size.height * 0.06),
-                      left: Math.round((size.width - hookWidth) / 2), // Center horizontally
-                      wordWrap: "break-word",
-                      borderWidth: 0,
-                      borderColor: "#000000",
-                      borderRadius: 40, // Full rounded pill corners
-                      paddingTop: 28,
-                      paddingBottom: 28,
-                      paddingLeft: 24,
-                      paddingRight: 24,
-                      boxShadow: { color: "rgba(0,0,0,0.12)", x: 0, y: 4, blur: 16 },
-                    },
-                  };
-
-                  // Dispatch to DesignCombo state manager
-                  dispatch(ADD_TEXT, {
-                    payload: hookPayload,
-                    options: {},
-                  });
-
-                  // Store the hook text for AI agent reference
-                  set({ textHook: result.textHook });
-                  console.log(`[Auto-Magic] Created text hook as timeline item: "${result.textHook}" (id: ${hookId})`);
-                } catch (hookError) {
-                  console.warn("[Auto-Magic] Failed to create text hook as timeline item, using fallback:", hookError);
-                  set({ textHook: result.textHook });
+            // Apply clip removals from Pass 1
+            if (pass1Result.clipsToRemove && pass1Result.clipsToRemove.length > 0) {
+              set({ processingStatus: `Removing ${pass1Result.clipsToRemove.length} duplicate takes...` });
+              for (const clipToRemove of pass1Result.clipsToRemove) {
+                const clipId = typeof clipToRemove === 'string' ? clipToRemove : clipToRemove.clipId;
+                const reason = typeof clipToRemove === 'string' ? 'Duplicate take' : clipToRemove.reason;
+                const clipToCheck = get().clips[clipId];
+                if (clipToCheck && clipToCheck.clipType !== "video_only") {
+                  const clipIndex = clipOrder.indexOf(clipId) + 1;
+                  removeClip(clipId, `Clip ${clipIndex}: ${reason}`);
+                  clipsRemoved++;
+                  removedClipIds.push(clipId);
+                  addProcessingEvent("clip_removed", `Removed Clip ${clipIndex}`, reason);
+                  console.log(`[Auto-Magic] Removed clip: ${clipId} - ${reason}`);
                 }
               }
             }
+            addProcessingEvent("pass_complete", `Pass 1 complete`, pass1Result.understanding?.substring(0, 80));
+
+            // Filter to unique clips for Pass 2
+            const uniqueClipData = clipData.filter(c =>
+              (pass1Result.uniqueClipIds || []).includes(c.clipId)
+            );
+
+            // ==================== PASS 2: Order ====================
+            set({ processingStatus: "Arranging clips for best flow..." });
+            addProcessingEvent("pass_start", "Pass 2: Finding optimal order");
+            const pass2Response = await fetch("/api/analyze-cuts", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                clips: uniqueClipData,
+                pass: 2,
+                understanding: pass1Result.understanding || "",
+              }),
+            });
+
+            if (!pass2Response.ok) {
+              throw new Error(`Pass 2 failed: ${pass2Response.status}`);
+            }
+
+            const pass2Result = await pass2Response.json();
+            console.log("[Auto-Magic] Pass 2 result:", {
+              suggestedOrder: pass2Result.suggestedOrder,
+              orderReasoning: pass2Result.orderReasoning?.substring(0, 100),
+            });
+
+            // Store order for later application
+            if (pass2Result.suggestedOrder && pass2Result.suggestedOrder.length > 0) {
+              aiSuggestedOrder = pass2Result.suggestedOrder;
+              aiReasoning = pass2Result.orderReasoning || "AI-optimized narrative flow";
+              addProcessingEvent("order_found", "Found optimal clip order", aiReasoning.substring(0, 80));
+            }
+            addProcessingEvent("pass_complete", "Pass 2 complete");
+
+            // Build ordered clip data for Pass 3
+            const orderedClipData = (pass2Result.suggestedOrder || [])
+              .map((id: string) => uniqueClipData.find(c => c.clipId === id))
+              .filter((c: any): c is typeof clipData[0] => c !== undefined);
+
+            // ==================== PASS 3: Refine + Hooks ====================
+            set({ processingStatus: "Refining script and generating hook..." });
+            addProcessingEvent("pass_start", "Pass 3: Refining script");
+            const pass3Response = await fetch("/api/analyze-cuts", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                clips: orderedClipData.length > 0 ? orderedClipData : uniqueClipData,
+                pass: 3,
+              }),
+            });
+
+            if (!pass3Response.ok) {
+              throw new Error(`Pass 3 failed: ${pass3Response.status}`);
+            }
+
+            const pass3Result = await pass3Response.json();
+            console.log("[Auto-Magic] Pass 3 result:", {
+              wordCutsCount: pass3Result.wordCuts?.length || 0,
+              wordIdsToDelete: pass3Result.wordIdsToDelete?.length || 0,
+              textHook: pass3Result.textHook,
+              emphasisPointsCount: pass3Result.emphasisPoints?.length || 0,
+            });
+
+            // Apply word cuts from Pass 3
+            if (pass3Result.wordIdsToDelete && pass3Result.wordIdsToDelete.length > 0) {
+              set({ processingStatus: `Cutting ${pass3Result.wordIdsToDelete.length} words...` });
+              deleteWords(pass3Result.wordIdsToDelete);
+              aiCutsCount = pass3Result.wordIdsToDelete.length;
+              if (pass3Result.wordCuts) {
+                wordCuts = pass3Result.wordCuts.map((cut: any) => ({
+                  clipId: cut.clipId,
+                  text: cut.text,
+                  reason: cut.reason,
+                }));
+                // Add event for each word cut (max 3 to avoid spam)
+                const cutsToShow = pass3Result.wordCuts.slice(0, 3);
+                for (const cut of cutsToShow) {
+                  addProcessingEvent("words_cut", `Cut: "${cut.text}"`, cut.reason);
+                }
+                if (pass3Result.wordCuts.length > 3) {
+                  addProcessingEvent("words_cut", `+${pass3Result.wordCuts.length - 3} more cuts`);
+                }
+              }
+            }
+
+            // Store emphasis points from Pass 3
+            if (pass3Result.emphasisPoints && pass3Result.emphasisPoints.length > 0) {
+              const emphasisPointsMapped: EmphasisPoint[] = pass3Result.emphasisPoints.map((ep: any) => {
+                const clip = clips[ep.clipId];
+                const word = clip?.words.find((w: TranscriptWord) => w.id === ep.wordId);
+                return {
+                  clipId: ep.clipId,
+                  wordId: ep.wordId,
+                  startMs: word?.startMs || 0,
+                  reason: ep.reason,
+                  text: ep.text,
+                };
+              });
+              set({ emphasisPoints: emphasisPointsMapped });
+              addProcessingEvent("emphasis_found", `Found ${emphasisPointsMapped.length} emphasis points`, "Key moments for zoom effects");
+              console.log(`[Auto-Magic] Found ${emphasisPointsMapped.length} emphasis points`);
+            }
+
+            // Create text hook from Pass 3
+            if (pass3Result.textHook && pass3Result.textHook.length > 0) {
+              aiTextHook = pass3Result.textHook;
+              set({ processingStatus: "Adding attention-grabbing text hook..." });
+              addProcessingEvent("hook_generated", `Hook: "${pass3Result.textHook}"`);
+
+              try {
+                const editorStore = await getEditorStore();
+                const { size } = editorStore.getState();
+                const hookId = `text-hook-${nanoid(8)}`;
+                const hookWidth = Math.round(size.width * 0.75);
+                const hookPayload = {
+                  id: hookId,
+                  type: "text",
+                  display: { from: 0, to: 4000 },
+                  details: {
+                    text: pass3Result.textHook,
+                    fontSize: 56,
+                    fontFamily: "Inter-Bold",
+                    color: "#000000",
+                    backgroundColor: "#ffffff",
+                    textAlign: "center",
+                    width: hookWidth,
+                    height: 120,
+                    top: Math.round(size.height * 0.06),
+                    left: Math.round((size.width - hookWidth) / 2),
+                    wordWrap: "break-word",
+                    borderWidth: 0,
+                    borderColor: "#000000",
+                    borderRadius: 40,
+                    paddingTop: 28,
+                    paddingBottom: 28,
+                    paddingLeft: 24,
+                    paddingRight: 24,
+                    boxShadow: { color: "rgba(0,0,0,0.12)", x: 0, y: 4, blur: 16 },
+                  },
+                };
+                dispatch(ADD_TEXT, { payload: hookPayload, options: {} });
+                set({ textHook: pass3Result.textHook });
+                console.log(`[Auto-Magic] Created text hook: "${pass3Result.textHook}"`);
+              } catch (hookError) {
+                console.warn("[Auto-Magic] Failed to create text hook timeline item:", hookError);
+                set({ textHook: pass3Result.textHook });
+              }
+            }
+
+            addProcessingEvent("pass_complete", "AI analysis complete!");
+
           } catch (aiError) {
             console.warn("[Auto-Magic] AI analysis failed, continuing with basic processing:", aiError);
+            addProcessingEvent("pass_complete", "AI analysis skipped", "Continuing with basic processing");
           }
 
           // Step 3: Optimize pacing (set gap threshold)
