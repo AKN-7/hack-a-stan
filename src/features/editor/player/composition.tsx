@@ -467,6 +467,7 @@ const Composition = () => {
             src={segment.clipUrl}
             startFrom={audioStartFrame}
             endAt={audioEndFrame}
+            volume={segment.volume ?? 1}
           />
         </Sequence>
       ))}
@@ -496,6 +497,7 @@ const Composition = () => {
                       src={segment.clipUrl}
                       startFrom={videoStartFrame}
                       endAt={videoEndFrame}
+                      volume={segment.volume ?? 1}
                     />
                   </AbsoluteFill>
                 ) : (
@@ -505,6 +507,7 @@ const Composition = () => {
                       src={segment.clipUrl}
                       startFrom={videoStartFrame}
                       endAt={videoEndFrame}
+                      volume={segment.volume ?? 1}
                       style={{
                         width: "100%",
                         height: "100%",
@@ -551,6 +554,7 @@ const Composition = () => {
                     src={segment.clipUrl}
                     startFrom={videoStartFrame}
                     endAt={videoEndFrame}
+                    volume={segment.volume ?? 1}
                   />
                 </AbsoluteFill>
               ) : (
@@ -560,6 +564,7 @@ const Composition = () => {
                     src={segment.clipUrl}
                     startFrom={videoStartFrame}
                     endAt={videoEndFrame}
+                    volume={segment.volume ?? 1}
                     style={{
                       width: "100%",
                       height: "100%",

@@ -17,6 +17,14 @@ interface ClipTranscript {
   }>;
 }
 
+interface SentenceData {
+  id: string;           // e.g., "clip1-sent0"
+  clipId: string;       // Parent clip
+  text: string;         // Full sentence text
+  startMs: number;
+  endMs: number;
+}
+
 // ============================================================================
 // PASS 1: Understand + Dedupe
 // ============================================================================
@@ -149,9 +157,15 @@ Return ONLY valid JSON.`;
 // PASS 2: Order
 // ============================================================================
 
-async function runPass2(clips: ClipTranscript[], understanding: string) {
+async function runPass2(clips: ClipTranscript[], understanding: string, sentences?: SentenceData[]) {
+  // If sentences are provided, use sentence-level ordering for finer control
+  if (sentences && sentences.length > 0) {
+    return runPass2Sentences(sentences, understanding);
+  }
+
+  // Fall back to clip-level ordering
   console.log("\n" + "=".repeat(80));
-  console.log("[PASS 2 - ORDER] INPUT");
+  console.log("[PASS 2 - ORDER (CLIP-LEVEL)] INPUT");
   console.log("=".repeat(80));
   console.log(`Understanding from Pass 1: "${understanding}"`);
   console.log(`Clips to order: ${clips.length}`);
@@ -216,6 +230,7 @@ Return ONLY valid JSON.`;
 
   let result = {
     suggestedOrder: [] as string[],
+    suggestedSentenceOrder: [] as string[],
     orderReasoning: "",
   };
 
@@ -225,6 +240,7 @@ Return ONLY valid JSON.`;
       const parsed = JSON.parse(jsonMatch[0]);
       result = {
         suggestedOrder: parsed.suggestedOrder || [],
+        suggestedSentenceOrder: [],
         orderReasoning: parsed.orderReasoning || "",
       };
     }
@@ -243,6 +259,122 @@ Return ONLY valid JSON.`;
 
   console.log("\n[PASS 2] PARSED RESULT:");
   console.log(`Suggested order: ${result.suggestedOrder.join(" -> ")}`);
+  console.log(`Reasoning: "${result.orderReasoning}"`);
+  console.log("=".repeat(80) + "\n");
+
+  return result;
+}
+
+// ============================================================================
+// PASS 2 (SENTENCE-LEVEL): Order sentences for fine-grained control
+// ============================================================================
+
+async function runPass2Sentences(sentences: SentenceData[], understanding: string) {
+  console.log("\n" + "=".repeat(80));
+  console.log("[PASS 2 - ORDER (SENTENCE-LEVEL)] INPUT");
+  console.log("=".repeat(80));
+  console.log(`Understanding from Pass 1: "${understanding}"`);
+  console.log(`Sentences to order: ${sentences.length}`);
+  sentences.forEach((s, i) => {
+    console.log(`  ${i + 1}. ${s.id} - "${s.text.substring(0, 80)}${s.text.length > 80 ? '...' : ''}"`);
+  });
+
+  const sentenceContext = sentences.map((s, i) =>
+    `[${i + 1}] ID: ${s.id}\n"${s.text}"`
+  ).join("\n\n");
+
+  const systemPrompt = `You are arranging SENTENCES (not clips) into the best narrative order.
+
+Duplicate clips have been removed. These are all the individual sentences from the remaining content.
+
+Context about this content:
+${understanding}
+
+Your job is to arrange these SENTENCES for the most compelling, coherent narrative.
+
+IMPORTANT - You can:
+- Interleave sentences from different clips
+- Put the most attention-grabbing sentence first (not necessarily from the first clip)
+- Build ideas logically - each sentence should flow from the previous
+- End with a strong conclusion or call to action
+
+Think about the FLOW of ideas, not which clip they came from. A sentence from Clip 3 might be the perfect opener, followed by context from Clip 1.`;
+
+  const userPrompt = `Here are ${sentences.length} sentences to arrange:
+
+${sentenceContext}
+
+Arrange these SENTENCES into the optimal order for a compelling narrative.
+You CAN interleave sentences from different clips - arrange by meaning, not by source.
+
+Return JSON:
+{
+  "suggestedSentenceOrder": ["${sentences[0]?.id}", "${sentences[1]?.id || 'sentence-id-2'}", ...],
+  "orderReasoning": "Brief explanation of why this sentence order creates the best narrative flow"
+}
+
+Use the EXACT sentence IDs shown above (like "${sentences[0]?.id}").
+Include ALL sentence IDs in your order - don't skip any.
+Return ONLY valid JSON.`;
+
+  const response = await anthropic.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 4096,
+    temperature: 0,
+    system: systemPrompt,
+    messages: [{ role: "user", content: userPrompt }],
+  });
+
+  const responseText = response.content
+    .filter((block): block is Anthropic.TextBlock => block.type === "text")
+    .map(block => block.text)
+    .join("");
+
+  console.log("\n" + "-".repeat(80));
+  console.log("[PASS 2 SENTENCES] FULL RAW RESPONSE:");
+  console.log("-".repeat(80));
+  console.log(responseText);
+  console.log("-".repeat(80));
+
+  let result = {
+    suggestedOrder: [] as string[],
+    suggestedSentenceOrder: [] as string[],
+    orderReasoning: "",
+  };
+
+  try {
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      result = {
+        suggestedOrder: [],
+        suggestedSentenceOrder: parsed.suggestedSentenceOrder || [],
+        orderReasoning: parsed.orderReasoning || "",
+      };
+    }
+  } catch (parseError) {
+    console.error("[Pass 2 Sentences] Failed to parse:", parseError);
+    // Fallback: keep original order
+    result.suggestedSentenceOrder = sentences.map(s => s.id);
+  }
+
+  // Ensure all input sentences are in the order
+  const orderedSet = new Set(result.suggestedSentenceOrder);
+  const missingSentences = sentences.filter(s => !orderedSet.has(s.id)).map(s => s.id);
+  if (missingSentences.length > 0) {
+    console.log(`[Pass 2 Sentences] Adding ${missingSentences.length} missing sentences to end`);
+    result.suggestedSentenceOrder = [...result.suggestedSentenceOrder, ...missingSentences];
+  }
+
+  console.log("\n[PASS 2 SENTENCES] PARSED RESULT:");
+  console.log(`Suggested sentence order (${result.suggestedSentenceOrder.length} sentences):`);
+  result.suggestedSentenceOrder.slice(0, 5).forEach((id, i) => {
+    const sentence = sentences.find(s => s.id === id);
+    console.log(`  ${i + 1}. ${id}: "${sentence?.text.substring(0, 50)}..."`);
+  });
+  if (result.suggestedSentenceOrder.length > 5) {
+    console.log(`  ... and ${result.suggestedSentenceOrder.length - 5} more`);
+  }
   console.log(`Reasoning: "${result.orderReasoning}"`);
   console.log("=".repeat(80) + "\n");
 
@@ -424,14 +556,138 @@ Return ONLY valid JSON.`;
 }
 
 // ============================================================================
+// PASS 4: Semantic Deduplication (sentence-level)
+// ============================================================================
+
+async function runPass4(sentences: SentenceData[]) {
+  console.log("\n" + "=".repeat(80));
+  console.log("[PASS 4 - SEMANTIC DEDUPLICATION] INPUT");
+  console.log("=".repeat(80));
+  console.log(`Sentences to analyze: ${sentences.length}`);
+  sentences.forEach((s, i) => {
+    console.log(`  ${i + 1}. ${s.id}: "${s.text.substring(0, 60)}${s.text.length > 60 ? '...' : ''}"`);
+  });
+
+  const sentenceContext = sentences.map((s, i) =>
+    `[${i + 1}] ID: ${s.id}\n"${s.text}"`
+  ).join("\n\n");
+
+  const systemPrompt = `You are doing semantic deduplication on a video script.
+
+The sentences are already in optimal order. Your job is to find THEMATIC REPETITION - places where the same sentiment or idea is expressed multiple times with different words.
+
+WHAT TO LOOK FOR:
+- Multiple expressions of amazement ("crazy", "absurd", "insane", "in awe", "mind-blowing")
+- Repeated qualifiers ("really really good" → "so so great" → "absolutely amazing")
+- Same point made with different phrasing
+- Redundant explanations of the same concept
+- Multiple calls-to-action saying the same thing
+
+IMPORTANT:
+- For each group of similar sentences, KEEP the STRONGEST/most impactful one
+- Delete the weaker/redundant versions
+- Don't delete sentences that add genuinely new information
+- A sentence is redundant only if another sentence already says the same thing better
+
+Example:
+- "This watermelon is absolutely crazy." (KEEP - most impactful)
+- "I'm in awe of this watermelon." (DELETE - redundant amazement)
+- "This is the most insane thing I've ever seen." (DELETE - more redundant amazement)
+- "It weighs over 200 pounds." (KEEP - new information)`;
+
+  const userPrompt = `Here is the ordered script to check for thematic repetition:
+
+${sentenceContext}
+
+Read this as a viewer would experience it. Find sentences that are thematically redundant - expressing the same sentiment/idea that another sentence already expresses better.
+
+For each redundant sentence, keep the strongest version and mark the others for deletion.
+
+Return JSON:
+{
+  "sentencesToDelete": [
+    {
+      "sentenceId": "${sentences[0]?.id || 'sentence-id'}",
+      "reason": "Why this sentence should be cut (e.g., 'Redundant amazement - keeping sentence X which is stronger')"
+    }
+  ],
+  "deduplicationReasoning": "Brief summary of what thematic repetition was found"
+}
+
+Use the EXACT sentence IDs shown above.
+If there's no thematic repetition, return an empty array for sentencesToDelete.
+Return ONLY valid JSON.`;
+
+  const response = await anthropic.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 4096,
+    temperature: 0,
+    system: systemPrompt,
+    messages: [{ role: "user", content: userPrompt }],
+  });
+
+  const responseText = response.content
+    .filter((block): block is Anthropic.TextBlock => block.type === "text")
+    .map(block => block.text)
+    .join("");
+
+  console.log("\n" + "-".repeat(80));
+  console.log("[PASS 4] FULL RAW RESPONSE:");
+  console.log("-".repeat(80));
+  console.log(responseText);
+  console.log("-".repeat(80));
+
+  let result = {
+    sentencesToDelete: [] as Array<{ sentenceId: string; reason: string }>,
+    deduplicationReasoning: "",
+  };
+
+  try {
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      result = {
+        sentencesToDelete: parsed.sentencesToDelete || [],
+        deduplicationReasoning: parsed.deduplicationReasoning || "",
+      };
+    }
+  } catch (parseError) {
+    console.error("[Pass 4] Failed to parse:", parseError);
+    // Fallback: no deletions
+  }
+
+  // Validate sentence IDs exist
+  const validSentenceIds = new Set(sentences.map(s => s.id));
+  result.sentencesToDelete = result.sentencesToDelete.filter(d => {
+    if (!validSentenceIds.has(d.sentenceId)) {
+      console.warn(`[Pass 4] Invalid sentence ID: ${d.sentenceId}`);
+      return false;
+    }
+    return true;
+  });
+
+  console.log("\n[PASS 4] PARSED RESULT:");
+  console.log(`Sentences to delete (${result.sentencesToDelete.length}):`);
+  result.sentencesToDelete.forEach((d, i) => {
+    const sentence = sentences.find(s => s.id === d.sentenceId);
+    console.log(`  ${i + 1}. ${d.sentenceId}: "${sentence?.text.substring(0, 40)}..." - ${d.reason}`);
+  });
+  console.log(`Reasoning: "${result.deduplicationReasoning}"`);
+  console.log("=".repeat(80) + "\n");
+
+  return result;
+}
+
+// ============================================================================
 // MAIN HANDLER
 // ============================================================================
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { clips, pass, understanding } = body as {
-      clips: ClipTranscript[];
+    const { clips, sentences, pass, understanding } = body as {
+      clips?: ClipTranscript[];
+      sentences?: SentenceData[];
       pass?: number;
       understanding?: string;
     };
@@ -440,18 +696,17 @@ export async function POST(request: NextRequest) {
     console.log(`[ANALYZE-CUTS API] INCOMING REQUEST - Pass ${pass || "legacy"}`);
     console.log("#".repeat(80));
     console.log(`Clips: ${clips?.length || 0}`);
+    console.log(`Sentences: ${sentences?.length || 0}`);
     if (understanding) {
       console.log(`Understanding context: "${understanding.substring(0, 100)}..."`);
-    }
-
-    if (!clips || clips.length === 0) {
-      console.log("No clips provided, returning empty response");
-      return Response.json({ actions: [], message: "No clips to analyze" });
     }
 
     // Route to appropriate pass
     switch (pass) {
       case 1: {
+        if (!clips || clips.length === 0) {
+          return Response.json({ actions: [], message: "No clips to analyze" });
+        }
         const result = await runPass1(clips);
         return Response.json({
           success: true,
@@ -461,7 +716,8 @@ export async function POST(request: NextRequest) {
       }
 
       case 2: {
-        const result = await runPass2(clips, understanding || "");
+        // Pass 2 can now work with sentences for fine-grained ordering
+        const result = await runPass2(clips || [], understanding || "", sentences);
         return Response.json({
           success: true,
           pass: 2,
@@ -470,6 +726,9 @@ export async function POST(request: NextRequest) {
       }
 
       case 3: {
+        if (!clips || clips.length === 0) {
+          return Response.json({ actions: [], message: "No clips to analyze" });
+        }
         const result = await runPass3(clips);
         return Response.json({
           success: true,
@@ -478,9 +737,31 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      case 4: {
+        // Pass 4: Semantic deduplication at sentence level
+        if (!sentences || sentences.length === 0) {
+          return Response.json({
+            success: true,
+            pass: 4,
+            sentencesToDelete: [],
+            deduplicationReasoning: "No sentences provided",
+          });
+        }
+        const result = await runPass4(sentences);
+        return Response.json({
+          success: true,
+          pass: 4,
+          ...result,
+        });
+      }
+
       default: {
         // Legacy: run all passes in sequence (for backward compatibility)
         console.log("[Analyze Cuts] Running legacy single-call mode");
+
+        if (!clips || clips.length === 0) {
+          return Response.json({ actions: [], message: "No clips to analyze" });
+        }
 
         // Pass 1
         const pass1Result = await runPass1(clips);
@@ -488,7 +769,7 @@ export async function POST(request: NextRequest) {
         // Filter to unique clips for Pass 2
         const uniqueClips = clips.filter(c => pass1Result.uniqueClipIds.includes(c.clipId));
 
-        // Pass 2
+        // Pass 2 (clip-level for legacy mode)
         const pass2Result = await runPass2(uniqueClips, pass1Result.understanding);
 
         // Order clips for Pass 3

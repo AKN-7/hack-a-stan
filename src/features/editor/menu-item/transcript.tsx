@@ -14,8 +14,10 @@ import {
   Pencil,
   Check,
   X,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
-import useTranscriptStore, { TranscriptWord } from "../store/use-transcript-store";
+import useTranscriptStore, { TranscriptWord, ClipTranscript, Sentence, TranscriptSection } from "../store/use-transcript-store";
 import useStore from "../store/use-store";
 import useUploadStore from "../store/use-upload-store";
 import { cn } from "@/lib/utils";
@@ -55,11 +57,7 @@ const formatDuration = (ms: number): string => {
 interface ClipItemProps {
   clipId: string;
   index: number;
-  clip: {
-    words: TranscriptWord[];
-    colorIndex?: number;
-    isDeleted?: boolean;
-  };
+  clip: ClipTranscript;
   currentWordId: string | null;
   selectedWordIds: Set<string>;
   editingWordId: string | null;
@@ -216,10 +214,169 @@ const ClipItem = ({
   );
 };
 
+// Section item component - displays a draggable section containing sentences from a source clip
+interface SectionItemProps {
+  section: TranscriptSection;
+  sectionIndex: number;
+  sentences: Record<string, Sentence>;
+  clips: Record<string, ClipTranscript>;
+  currentWordId: string | null;
+  selectedWordIds: Set<string>;
+  editingWordId: string | null;
+  wordRefs: React.MutableRefObject<Map<string, HTMLSpanElement>>;
+  handleWordClick: (word: TranscriptWord, event: React.MouseEvent) => void;
+  handleWordDoubleClick: (word: TranscriptWord) => void;
+  handleMouseUp: () => void;
+  hardRemoveSection: (sectionId: string) => void;
+}
+
+const SectionItem = ({
+  section,
+  sectionIndex,
+  sentences,
+  clips,
+  currentWordId,
+  selectedWordIds,
+  editingWordId,
+  wordRefs,
+  handleWordClick,
+  handleWordDoubleClick,
+  handleMouseUp,
+  hardRemoveSection,
+}: SectionItemProps) => {
+  const dragControls = useDragControls();
+  const sourceClip = clips[section.sourceClipId];
+  const color = getClipColor(section.colorIndex ?? getStableColorIndex(section.sourceClipId));
+
+  // Get all words from all sentences in this section
+  const sectionWords: TranscriptWord[] = [];
+  for (const sentenceId of section.sentenceIds) {
+    const sentence = sentences[sentenceId];
+    if (!sentence || sentence.isDeleted) continue;
+    const clip = clips[sentence.clipId];
+    if (!clip) continue;
+
+    for (const wordId of sentence.wordIds) {
+      const word = clip.words.find(w => w.id === wordId);
+      if (word) {
+        sectionWords.push(word);
+      }
+    }
+  }
+
+  // Calculate duration from non-deleted words
+  const sectionDurationMs = sectionWords
+    .filter(w => !w.isDeleted)
+    .reduce((sum, w) => sum + (w.endMs - w.startMs), 0);
+
+  return (
+    <Reorder.Item
+      value={section.id}
+      dragListener={false}
+      dragControls={dragControls}
+      className="border-b border-border last:border-b-0 bg-white select-none"
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10 }}
+      whileDrag={{
+        scale: 1.02,
+        boxShadow: "0 10px 40px rgba(0,0,0,0.15)",
+        zIndex: 50,
+        cursor: "grabbing"
+      }}
+      transition={{
+        layout: { type: "spring", stiffness: 500, damping: 35 },
+        opacity: { duration: 0.2 },
+        y: { duration: 0.2 }
+      }}
+      layout
+    >
+      {/* Section Header */}
+      <div className={cn(
+        "flex items-center gap-2 md:gap-3 px-3 md:px-4 py-2 md:py-3",
+        color.light, color.border, "border-b"
+      )}>
+        {/* Drag handle */}
+        <div
+          onPointerDown={(e) => dragControls.start(e)}
+          className={cn(
+            "cursor-grab active:cursor-grabbing touch-none p-1 -m-1 rounded transition-colors",
+            color.text, "opacity-50 hover:opacity-100 hover:bg-black/5"
+          )}
+        >
+          <GripVertical className="h-4 w-4" />
+        </div>
+
+        <span className={cn("text-sm font-semibold flex-1 truncate", color.text)}>
+          Clip {sectionIndex + 1}
+        </span>
+
+        <span className={cn(
+          "text-xs font-medium px-1.5 md:px-2 py-0.5 rounded-md shrink-0 bg-white/60",
+          color.text
+        )}>
+          {formatDuration(sectionDurationMs)}
+        </span>
+
+        {/* Delete Section Button */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn(
+            "h-8 w-8 md:h-7 md:w-7 rounded-lg hover:text-red-600 hover:bg-red-100/80",
+            color.text, "opacity-50 hover:opacity-100"
+          )}
+          onClick={() => hardRemoveSection(section.id)}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+
+      {/* Section Words */}
+      <div
+        className="px-4 py-3 overflow-hidden"
+        onMouseUp={handleMouseUp}
+      >
+        <p className="text-sm leading-8 max-w-full select-text" style={{ wordWrap: "break-word", overflowWrap: "break-word", wordBreak: "break-word" }}>
+          {sectionWords.map((word, wordIndex) => (
+            <span key={word.id}>
+              <span
+                ref={(el) => {
+                  if (el) wordRefs.current.set(word.id, el);
+                }}
+                onClick={(e) => handleWordClick(word, e)}
+                onDoubleClick={() => !word.isDeleted && handleWordDoubleClick(word)}
+                className={cn(
+                  "rounded px-0.5 py-0.5 transition-colors duration-100 inline cursor-text",
+                  word.isDeleted && selectedWordIds.has(word.id)
+                    ? "line-through bg-amber-100 text-amber-700 ring-2 ring-amber-400 font-medium"
+                    : word.isDeleted
+                    ? "line-through opacity-50 bg-red-100 text-red-700"
+                    : editingWordId === word.id
+                    ? "bg-blue-500 text-white font-medium ring-2 ring-blue-300"
+                    : currentWordId === word.id
+                    ? "bg-primary text-white font-medium"
+                    : selectedWordIds.has(word.id)
+                    ? cn(color.light, color.text, "font-medium")
+                    : "hover:bg-muted"
+                )}
+              >
+                {word.text}{wordIndex < sectionWords.length - 1 ? " " : ""}
+              </span>
+            </span>
+          ))}
+        </p>
+      </div>
+    </Reorder.Item>
+  );
+};
+
 export const Transcript = () => {
   const {
     clips,
     clipOrder,
+    sentences,
+    sentenceOrder,
     getUnifiedTranscript,
     deleteWords,
     restoreWord,
@@ -230,7 +387,27 @@ export const Transcript = () => {
     reorderClips,
     hardRemoveClip,
     editWord,
+    setSentenceOrder,
+    deleteSentence,
+    restoreSentence,
+    getTranscriptSections,
+    reorderSections,
+    restoreClip,
   } = useTranscriptStore();
+
+  // Get transcript sections (derived from sentenceOrder)
+  const transcriptSections = getTranscriptSections();
+
+  // State for collapsed "removed content" section
+  const [showRemovedContent, setShowRemovedContent] = useState(false);
+
+  // Get removed clips and sentences
+  const removedClips = clipOrder.filter(id => {
+    const clip = clips[id];
+    return clip && clip.isDeleted && clip.clipType !== "video_only" && clip.clipType !== "background_music";
+  });
+
+  const removedSentences = Object.values(sentences).filter(s => s.isDeleted);
   const [currentWordId, setCurrentWordId] = useState<string | null>(null);
 
   const { playerRef, fps } = useStore();
@@ -653,8 +830,168 @@ export const Transcript = () => {
         </div>
       )}
 
-      {/* Transcript Content - Clips as Separate Sections */}
-      {clipOrder.length > 0 && clipOrder.some(id => clips[id]?.status === "ready") && (
+      {/* Transcript Content - Section-based view when sentences are ordered */}
+      {clipOrder.length > 0 && clipOrder.some(id => clips[id]?.status === "ready") && transcriptSections.length > 0 && (
+        <div className="flex-1 overflow-y-auto overflow-x-hidden">
+          <div className="px-4 py-2.5 bg-gradient-to-r from-primary/5 via-primary/5 to-transparent border-b border-primary/10">
+            <p className="text-xs text-muted-foreground">
+              <span className="text-primary font-medium">AI-optimized flow</span> — drag clips to rearrange
+            </p>
+          </div>
+
+          <Reorder.Group
+            axis="y"
+            values={transcriptSections.map(s => s.id)}
+            onReorder={(newOrder) => {
+              reorderSections(newOrder);
+            }}
+            className="relative"
+            layoutScroll
+          >
+            {transcriptSections.map((section, index) => (
+              <SectionItem
+                key={section.id}
+                section={section}
+                sectionIndex={index}
+                sentences={sentences}
+                clips={clips}
+                currentWordId={currentWordId}
+                selectedWordIds={selectedWordIds}
+                editingWordId={editingWordId}
+                wordRefs={wordRefs}
+                handleWordClick={handleWordClick}
+                handleWordDoubleClick={handleWordDoubleClick}
+                handleMouseUp={handleMouseUp}
+                hardRemoveSection={(sectionId) => {
+                  // Delete all sentences in this section
+                  const sec = transcriptSections.find(s => s.id === sectionId);
+                  if (sec) {
+                    for (const sentId of sec.sentenceIds) {
+                      deleteSentence(sentId);
+                    }
+                  }
+                }}
+              />
+            ))}
+          </Reorder.Group>
+
+          {/* Removed Content Section */}
+          {(removedClips.length > 0 || removedSentences.length > 0) && (
+            <div className="border-t border-border mt-2">
+              <button
+                type="button"
+                onClick={() => setShowRemovedContent(!showRemovedContent)}
+                className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-muted/50 transition-colors"
+              >
+                {showRemovedContent ? (
+                  <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                )}
+                <span className="text-sm font-medium text-muted-foreground">
+                  Removed content
+                </span>
+                <span className="text-xs text-muted-foreground/70 ml-1">
+                  ({removedClips.length} clips, {removedSentences.length} sentences)
+                </span>
+              </button>
+
+              {showRemovedContent && (
+                <div className="px-4 pb-4 space-y-3">
+                  {/* Removed Clips */}
+                  {removedClips.map(clipId => {
+                    const clip = clips[clipId];
+                    if (!clip) return null;
+                    const color = getClipColor(clip.colorIndex ?? getStableColorIndex(clipId));
+
+                    return (
+                      <div
+                        key={clipId}
+                        className="flex items-start gap-3 p-3 rounded-lg bg-red-50/50 border border-red-200/50"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={cn(
+                              "text-xs font-bold px-1.5 py-0.5 rounded line-through",
+                              color.light, color.text, "opacity-60"
+                            )}>
+                              Clip
+                            </span>
+                            <span className="text-xs text-red-600 font-medium">Removed</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground line-through truncate">
+                            {clip.text?.substring(0, 100)}...
+                          </p>
+                          {clip.deleteReason && (
+                            <p className="text-[10px] text-red-500 mt-1 italic">
+                              {clip.deleteReason}
+                            </p>
+                          )}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => restoreClip(clipId)}
+                          className="h-7 px-2 text-xs text-green-600 hover:text-green-700 hover:bg-green-100"
+                        >
+                          <RotateCcw className="w-3 h-3 mr-1" />
+                          Restore
+                        </Button>
+                      </div>
+                    );
+                  })}
+
+                  {/* Removed Sentences */}
+                  {removedSentences.map(sentence => {
+                    const clip = clips[sentence.clipId];
+                    if (!clip) return null;
+                    const color = getClipColor(clip.colorIndex ?? getStableColorIndex(sentence.clipId));
+
+                    return (
+                      <div
+                        key={sentence.id}
+                        className="flex items-start gap-3 p-3 rounded-lg bg-amber-50/50 border border-amber-200/50"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={cn(
+                              "text-[10px] font-bold px-1.5 py-0.5 rounded",
+                              color.light, color.text
+                            )}>
+                              Sentence
+                            </span>
+                            <span className="text-xs text-amber-600 font-medium">Cut</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground line-through">
+                            {sentence.text}
+                          </p>
+                          {sentence.deleteReason && (
+                            <p className="text-[10px] text-amber-600 mt-1 italic">
+                              {sentence.deleteReason}
+                            </p>
+                          )}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => restoreSentence(sentence.id)}
+                          className="h-7 px-2 text-xs text-green-600 hover:text-green-700 hover:bg-green-100"
+                        >
+                          <RotateCcw className="w-3 h-3 mr-1" />
+                          Restore
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Transcript Content - Clip-based view (before magic processing) */}
+      {clipOrder.length > 0 && clipOrder.some(id => clips[id]?.status === "ready") && transcriptSections.length === 0 && (
         <div className="flex-1 overflow-y-auto overflow-x-hidden">
           <div className="px-4 py-3 bg-gradient-to-r from-primary/5 via-primary/5 to-transparent border-b border-primary/10">
             <p className="text-xs text-muted-foreground">
@@ -707,7 +1044,6 @@ export const Transcript = () => {
                 );
               })}
           </Reorder.Group>
-
         </div>
       )}
 

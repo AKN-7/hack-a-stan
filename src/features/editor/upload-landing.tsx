@@ -267,10 +267,10 @@ const UploadLanding = () => {
                     <img
                       src={upload.thumbnail}
                       alt={upload.file.name}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover opacity-100"
                     />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center bg-muted">
+                    <div className="w-full h-full flex items-center justify-center bg-muted opacity-100">
                       {upload.file.type.startsWith("audio/") ? (
                         <Music className="w-6 h-6 text-muted-foreground" />
                       ) : (
@@ -291,7 +291,7 @@ const UploadLanding = () => {
 
                   {/* Progress overlay - only when actually uploading */}
                   {(upload.status === "pending" || upload.status === "uploading") && (
-                    <div className="absolute inset-0 bg-white/95 flex flex-col items-center justify-center gap-2">
+                    <div className="absolute inset-0 bg-white/60 flex flex-col items-center justify-center gap-2">
                       <span className="text-primary text-sm font-bold">
                         {upload.progress}%
                       </span>

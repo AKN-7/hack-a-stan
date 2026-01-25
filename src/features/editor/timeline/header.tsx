@@ -1,4 +1,7 @@
 import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { dispatch } from "@designcombo/events";
 import { PLAYER_PAUSE, PLAYER_PLAY } from "../constants/events";
 import { LAYER_DELETE } from "@designcombo/state";
@@ -8,7 +11,7 @@ import useTranscriptStore from "../store/use-transcript-store";
 import { useCurrentPlayerFrame } from "../hooks/use-current-frame";
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useIsMobile } from "@/hooks/use-media-query";
-import { Trash2 } from "lucide-react";
+import { Trash2, Volume2, VolumeX, Wand2, Loader2, Sparkles } from "lucide-react";
 
 const IconPlayerPlayFilled = ({ size }: { size: number }) => (
   <svg
@@ -89,6 +92,17 @@ const Header = () => {
   const clipOrder = useTranscriptStore((s) => s.clipOrder);
   const getTotalDurationMs = useTranscriptStore((s) => s.getTotalDurationMs);
   const removeClip = useTranscriptStore((s) => s.removeClip);
+  const setClipVolume = useTranscriptStore((s) => s.setClipVolume);
+  const startEnhancement = useTranscriptStore((s) => s.startEnhancement);
+  const toggleEnhancedAudio = useTranscriptStore((s) => s.toggleEnhancedAudio);
+
+  // Get selected clip info for volume/enhance controls
+  const selectedClip = selectedTimelineItemType === "transcript-clip" && selectedTimelineItemId
+    ? clips[selectedTimelineItemId]
+    : null;
+  const clipVolume = selectedClip?.volume ?? 1;
+  const enhancementStatus = selectedClip?.enhancementStatus;
+  const useEnhancedAudio = selectedClip?.useEnhancedAudio !== false;
 
   const currentFrame = useCurrentPlayerFrame(playerRef);
 
@@ -275,7 +289,69 @@ const Header = () => {
 
       {/* Right spacer to balance left delete button (desktop) */}
       {!isMobile && <div className="flex-1" />}
-      {!isMobile && <div className="w-[85px]" />}
+
+      {/* Volume/Enhance controls - shows when transcript clip is selected (RIGHT side) */}
+      {!isMobile && selectedClip && selectedTimelineItemType === "transcript-clip" ? (
+        <div className="flex items-center gap-3">
+          {/* Enhancement controls */}
+          {enhancementStatus === "processing" && (
+            <div className="flex items-center gap-1.5 text-xs text-blue-600">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              <span>Enhancing...</span>
+            </div>
+          )}
+          {enhancementStatus === "completed" && (
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="text-xs bg-green-100 text-green-700 px-2 py-0.5">
+                <Sparkles className="w-3 h-3 mr-1" />
+                Enhanced
+              </Badge>
+              <Switch
+                checked={useEnhancedAudio}
+                onCheckedChange={() => selectedTimelineItemId && toggleEnhancedAudio(selectedTimelineItemId)}
+                className="scale-90"
+              />
+            </div>
+          )}
+          {enhancementStatus === "failed" && (
+            <Badge variant="secondary" className="text-xs bg-red-100 text-red-700 px-2 py-0.5">
+              Failed
+            </Badge>
+          )}
+          {(!enhancementStatus || enhancementStatus === "idle") && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => selectedTimelineItemId && startEnhancement(selectedTimelineItemId)}
+              className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <Wand2 className="w-3.5 h-3.5 mr-1.5" />
+              Enhance
+            </Button>
+          )}
+
+          {/* Volume control */}
+          <div className="flex items-center gap-2 px-2 py-1 rounded-lg bg-muted">
+            {clipVolume === 0 ? (
+              <VolumeX className="w-4 h-4 text-muted-foreground" />
+            ) : (
+              <Volume2 className="w-4 h-4 text-muted-foreground" />
+            )}
+            <Slider
+              value={[clipVolume * 100]}
+              onValueChange={([v]) => selectedTimelineItemId && setClipVolume(selectedTimelineItemId, v / 100)}
+              max={100}
+              step={1}
+              className="w-20"
+            />
+            <span className="text-xs text-muted-foreground w-8 text-right font-mono">
+              {Math.round(clipVolume * 100)}%
+            </span>
+          </div>
+        </div>
+      ) : (
+        !isMobile && <div className="w-[85px]" />
+      )}
     </div>
   );
 };
