@@ -1,12 +1,13 @@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ITrackItem, IVideo } from "@designcombo/types";
 import { Button } from "@/components/ui/button";
-import { Volume2, VolumeX } from "lucide-react";
+import { Volume2, VolumeX, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { dispatch } from "@designcombo/events";
-import { EDIT_OBJECT } from "@designcombo/state";
+import { EDIT_OBJECT, LAYER_DELETE } from "@designcombo/state";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import useStore from "../store/use-store";
 
 // Speed presets for talking-head content
 const SPEED_PRESETS = [
@@ -24,6 +25,23 @@ const BasicVideo = ({
 }) => {
   const [properties, setProperties] = useState(trackItem);
   const [isMuted, setIsMuted] = useState((trackItem.details.volume ?? 100) === 0);
+  const { trackItemsMap, trackItemIds, setState } = useStore();
+
+  const handleDelete = () => {
+    const newTrackItemsMap = { ...trackItemsMap };
+    delete newTrackItemsMap[trackItem.id];
+    const newTrackItemIds = trackItemIds.filter(id => id !== trackItem.id);
+    setState({
+      trackItemsMap: newTrackItemsMap,
+      trackItemIds: newTrackItemIds,
+    });
+
+    dispatch(LAYER_DELETE, {
+      payload: {
+        trackItemIds: [trackItem.id],
+      },
+    });
+  };
 
   const handleToggleMute = () => {
     const newVolume = isMuted ? 100 : 0;
@@ -114,6 +132,18 @@ const BasicVideo = ({
                 </Button>
               ))}
             </div>
+          </div>
+
+          {/* Delete button */}
+          <div className="pt-4 mt-4 border-t border-border">
+            <Button
+              variant="outline"
+              className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300"
+              onClick={handleDelete}
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Delete
+            </Button>
           </div>
         </div>
       </ScrollArea>

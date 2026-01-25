@@ -6,10 +6,11 @@ import Opacity from "./common/opacity";
 import Rounded from "./common/radius";
 import AspectRatio from "./common/aspect-ratio";
 import { Button } from "@/components/ui/button";
-import { Crop } from "lucide-react";
+import { Crop, Trash2 } from "lucide-react";
 import React, { useEffect, useState } from "react";
 import { dispatch } from "@designcombo/events";
-import { EDIT_OBJECT } from "@designcombo/state";
+import { EDIT_OBJECT, LAYER_DELETE } from "@designcombo/state";
+import useStore from "../store/use-store";
 import Blur from "./common/blur";
 import Brightness from "./common/brightness";
 import useLayoutStore from "../store/use-layout-store";
@@ -26,9 +27,29 @@ const BasicImage = ({
   const showAll = !type;
   const [properties, setProperties] = useState(trackItem);
   const { setCropTarget } = useLayoutStore();
+  const { trackItemsMap, trackItemIds, setState } = useStore();
+
   useEffect(() => {
     setProperties(trackItem);
   }, [trackItem]);
+
+  const handleDelete = () => {
+    // Update Zustand store directly for immediate UI feedback
+    const newTrackItemsMap = { ...trackItemsMap };
+    delete newTrackItemsMap[trackItem.id];
+    const newTrackItemIds = trackItemIds.filter(id => id !== trackItem.id);
+    setState({
+      trackItemsMap: newTrackItemsMap,
+      trackItemIds: newTrackItemIds,
+    });
+
+    // Also dispatch to DesignCombo state manager for persistence
+    dispatch(LAYER_DELETE, {
+      payload: {
+        trackItemIds: [trackItem.id],
+      },
+    });
+  };
 
   const onChangeBorderWidth = (v: number) => {
     dispatch(EDIT_OBJECT, {
@@ -268,6 +289,18 @@ const BasicImage = ({
             .map((comp) => (
               <React.Fragment key={comp.key}>{comp.component}</React.Fragment>
             ))}
+
+          {/* Delete button */}
+          <div className="pt-4 mt-4 border-t border-border">
+            <Button
+              variant="outline"
+              className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300"
+              onClick={handleDelete}
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Delete
+            </Button>
+          </div>
         </div>
       </ScrollArea>
     </div>

@@ -2,7 +2,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import useDataState from "../store/use-data-state";
 import { loadFonts } from "../utils/fonts";
 import { dispatch } from "@designcombo/events";
-import { ADD_ANIMATION, EDIT_OBJECT } from "@designcombo/state";
+import { ADD_ANIMATION, EDIT_OBJECT, LAYER_DELETE } from "@designcombo/state";
 import React, { useEffect, useState } from "react";
 import { IBoxShadow, ICaption, ITrackItem } from "@designcombo/types";
 import Outline from "./common/outline";
@@ -12,7 +12,9 @@ import CaptionColors from "./common/caption-colors";
 import { TextControls } from "./common/text";
 import { Animation, presets } from "../player/animated";
 import { PresetName } from "../player/animated/presets";
-import { X } from "lucide-react";
+import { X, Trash2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import useStore from "../store/use-store";
 import { ICompactFont, IFont } from "../interfaces/editor";
 import { DEFAULT_FONT } from "../constants/font";
 import { PresetCaption } from "./common/preset-caption";
@@ -97,6 +99,23 @@ const BasicCaption = ({
     name: "Regular"
   });
   const { compactFonts, fonts } = useDataState();
+  const { trackItemsMap, trackItemIds, setState } = useStore();
+
+  const handleDelete = () => {
+    const newTrackItemsMap = { ...trackItemsMap };
+    delete newTrackItemsMap[trackItem.id];
+    const newTrackItemIds = trackItemIds.filter(id => id !== trackItem.id);
+    setState({
+      trackItemsMap: newTrackItemsMap,
+      trackItemIds: newTrackItemIds,
+    });
+
+    dispatch(LAYER_DELETE, {
+      payload: {
+        trackItemIds: [trackItem.id],
+      },
+    });
+  };
 
   useEffect(() => {
     const fontFamily =
@@ -509,6 +528,18 @@ const BasicCaption = ({
               .map((comp) => (
                 <React.Fragment key={comp.key}>{comp.component}</React.Fragment>
               ))}
+
+            {/* Delete button */}
+            <div className="pt-4 mt-4 border-t border-border">
+              <Button
+                variant="outline"
+                className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300"
+                onClick={handleDelete}
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                Delete
+              </Button>
+            </div>
           </div>
         </ScrollArea>
       </div>

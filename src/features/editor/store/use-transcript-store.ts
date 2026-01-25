@@ -13,9 +13,12 @@ const getEffectsStore = () => import("./use-effects-store").then(m => m.default)
 // Get editor store for video dimensions (lazy to avoid circular deps)
 const getEditorStore = () => import("./use-store").then(m => m.default);
 
+// Get upload store to check for pending uploads (lazy to avoid circular deps)
+const getUploadStore = () => import("./use-upload-store").then(m => m.default);
+
 // Debounce timer for auto-magic processing (wait for all clips to finish)
 let autoMagicDebounceTimer: NodeJS.Timeout | null = null;
-const AUTO_MAGIC_DEBOUNCE_MS = 500; // Wait 500ms after last transcription (reduced from 2s)
+const AUTO_MAGIC_DEBOUNCE_MS = 1500; // Wait 1.5s after last transcription to ensure all uploads complete
 
 // Word with timing and clip association
 export interface TranscriptWord {
@@ -1671,7 +1674,22 @@ const useTranscriptStore = create<ITranscriptStore>()(
           console.log(`[Auto-Magic] All ${clipOrder.length} clips ready - waiting ${AUTO_MAGIC_DEBOUNCE_MS}ms to ensure no more clips incoming...`);
 
           // Debounce: wait a bit to make sure no more clips are coming
-          autoMagicDebounceTimer = setTimeout(() => {
+          autoMagicDebounceTimer = setTimeout(async () => {
+            // Check if uploads are still in progress
+            try {
+              const uploadStore = await getUploadStore();
+              const { activeUploads } = uploadStore.getState();
+              const uploadsInProgress = activeUploads.filter(
+                u => u.status === "uploading" || u.status === "pending"
+              );
+              if (uploadsInProgress.length > 0) {
+                console.log(`[Auto-Magic] ${uploadsInProgress.length} uploads still in progress, waiting...`);
+                return;
+              }
+            } catch (e) {
+              console.warn("[Auto-Magic] Could not check upload store:", e);
+            }
+
             // Double-check we're still ready and not processing
             const currentState = get();
             if (currentState.isProcessing) {

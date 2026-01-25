@@ -13,6 +13,9 @@ import { Moveable } from "@interactify/toolkit";
 import { PlayerRef } from "@remotion/player";
 import { create } from "zustand";
 
+// Timeline selection types
+type TimelineSelectionType = "transcript-clip" | "overlay-item" | null;
+
 interface ITimelineStore {
   duration: number;
   fps: number;
@@ -45,6 +48,12 @@ interface ITimelineStore {
   };
   viewTimeline: boolean;
   setViewTimeline: (viewTimeline: boolean) => void;
+
+  // Timeline selection state
+  selectedTimelineItemId: string | null;
+  selectedTimelineItemType: TimelineSelectionType;
+  setTimelineSelection: (id: string | null, type: TimelineSelectionType) => void;
+  clearTimelineSelection: () => void;
 }
 
 const useStore = create<ITimelineStore>((set) => ({
@@ -87,6 +96,12 @@ const useStore = create<ITimelineStore>((set) => ({
   transitionsMap: {},
   trackItemsMap: {},
   sceneMoveableRef: null,
+
+  // Timeline selection
+  selectedTimelineItemId: null,
+  selectedTimelineItemType: null,
+  setTimelineSelection: (id, type) => set({ selectedTimelineItemId: id, selectedTimelineItemType: type }),
+  clearTimelineSelection: () => set({ selectedTimelineItemId: null, selectedTimelineItemType: null }),
 
   setTimeline: (timeline: Timeline) =>
     set(() => ({

@@ -4,8 +4,10 @@ import Volume from "./common/volume";
 import Speed from "./common/speed";
 import React, { useState } from "react";
 import { dispatch } from "@designcombo/events";
-import { EDIT_OBJECT, LAYER_REPLACE } from "@designcombo/state";
+import { EDIT_OBJECT, LAYER_REPLACE, LAYER_DELETE } from "@designcombo/state";
 import { Button } from "@/components/ui/button";
+import { Trash2 } from "lucide-react";
+import useStore from "../store/use-store";
 
 const BasicAudio = ({
   trackItem,
@@ -16,6 +18,23 @@ const BasicAudio = ({
 }) => {
   const showAll = !type;
   const [properties, setProperties] = useState(trackItem);
+  const { trackItemsMap, trackItemIds, setState } = useStore();
+
+  const handleDelete = () => {
+    const newTrackItemsMap = { ...trackItemsMap };
+    delete newTrackItemsMap[trackItem.id];
+    const newTrackItemIds = trackItemIds.filter(id => id !== trackItem.id);
+    setState({
+      trackItemsMap: newTrackItemsMap,
+      trackItemIds: newTrackItemIds,
+    });
+
+    dispatch(LAYER_DELETE, {
+      payload: {
+        trackItemIds: [trackItem.id],
+      },
+    });
+  };
 
   const handleChangeVolume = (v: number) => {
     dispatch(EDIT_OBJECT, {
@@ -89,6 +108,18 @@ const BasicAudio = ({
             .map((comp) => (
               <React.Fragment key={comp.key}>{comp.component}</React.Fragment>
             ))}
+
+          {/* Delete button */}
+          <div className="pt-4 mt-4 border-t border-border">
+            <Button
+              variant="outline"
+              className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200 hover:border-red-300"
+              onClick={handleDelete}
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Delete
+            </Button>
+          </div>
         </div>
       </ScrollArea>
     </div>

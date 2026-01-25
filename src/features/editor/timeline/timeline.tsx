@@ -14,7 +14,7 @@ const Timeline = () => {
   );
 
   return (
-    <div className="bg-gradient-to-b from-muted to-background h-full w-full flex flex-col border-t border-border">
+    <div data-timeline className="bg-gradient-to-b from-muted to-background h-full w-full flex flex-col border-t border-border">
       {/* Play controls + time */}
       <Header />
 

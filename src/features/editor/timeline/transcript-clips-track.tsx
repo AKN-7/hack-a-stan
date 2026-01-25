@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState, useEffect } from "react";
-import { Film, Trash2, GripHorizontal, Loader2, Scissors } from "lucide-react";
+import { Film, GripHorizontal, Loader2, Scissors } from "lucide-react";
 import useTranscriptStore from "../store/use-transcript-store";
 import useStore from "../store/use-store";
 import { useCurrentPlayerFrame } from "../hooks/use-current-frame";
@@ -31,9 +31,9 @@ interface ClipBlock {
 type TrimSide = "left" | "right" | null;
 
 const TranscriptClipsTrack = () => {
-  const { clips, clipOrder, reorderClips, removeClip, trimClip } = useTranscriptStore();
+  const { clips, clipOrder, reorderClips, trimClip } = useTranscriptStore();
   const getRenderSegments = useTranscriptStore(s => s.getRenderSegments);
-  const { fps, playerRef } = useStore();
+  const { fps, playerRef, selectedTimelineItemId, setTimelineSelection, clearTimelineSelection } = useStore();
   const currentFrame = useCurrentPlayerFrame(playerRef);
 
   const trackRef = useRef<HTMLDivElement>(null);
@@ -118,12 +118,18 @@ const TranscriptClipsTrack = () => {
     ? Math.min((currentTimeMs / totalDurationMs) * 100, 100)
     : 0;
 
-  // Click to seek
+  // Click to seek (and clear selection if clicking empty space)
   const handleTrackClick = useCallback((e: React.MouseEvent) => {
     if (!trackRef.current || !playerRef?.current || totalDurationMs <= 0) return;
     if ((e.target as HTMLElement).closest('button')) return;
     if ((e.target as HTMLElement).closest('.trim-handle')) return;
     if (draggedClipId || trimmingClipId) return;
+
+    // Clear selection if clicking empty space (not on a clip)
+    const clickedOnClip = (e.target as HTMLElement).closest('[draggable]');
+    if (!clickedOnClip) {
+      clearTimelineSelection();
+    }
 
     const rect = trackRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -132,7 +138,7 @@ const TranscriptClipsTrack = () => {
     const targetFrame = Math.round((targetMs / 1000) * fps);
 
     playerRef.current.seekTo(targetFrame);
-  }, [playerRef, totalDurationMs, fps, draggedClipId, trimmingClipId]);
+  }, [playerRef, totalDurationMs, fps, draggedClipId, trimmingClipId, clearTimelineSelection]);
 
   // Trim handlers
   const handleTrimStart = (e: React.MouseEvent, clipId: string, side: TrimSide, block: ClipBlock) => {
@@ -303,6 +309,7 @@ const TranscriptClipsTrack = () => {
         const hasError = block.status === "error";
         const isReady = block.status === "ready";
         const isTrimming = trimmingClipId === block.clipId;
+        const isSelected = selectedTimelineItemId === block.clipId;
 
         const widthPercent = totalDurationMs > 0
           ? (block.durationMs / totalDurationMs) * 100
@@ -317,7 +324,7 @@ const TranscriptClipsTrack = () => {
             key={block.clipId}
             className={cn(
               "relative h-14 rounded-2xl flex items-center transition-all duration-200 ease-out",
-              isReady && !isTrimming ? "cursor-grab active:cursor-grabbing active:scale-[0.98]" : "cursor-default",
+              isReady && !isTrimming ? "cursor-pointer" : "cursor-default",
               isDragging
                 ? "opacity-50 scale-95 border-2 border-dashed border-muted-foreground/40 bg-muted"
                 : isTranscribing
@@ -327,13 +334,19 @@ const TranscriptClipsTrack = () => {
                 : isTrimming
                 ? cn("bg-gradient-to-r", style.gradient, "ring-2 ring-white/80")
                 : cn("bg-gradient-to-r", style.gradient, "hover:scale-[1.02] hover:brightness-105"),
-              isDropTarget && "ring-2 ring-primary ring-offset-2 ring-offset-background"
+              isDropTarget && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+              isSelected && "ring-2 ring-primary ring-offset-2 ring-offset-background shadow-lg"
             )}
             style={{
               width: `${Math.max(12, widthPercent)}%`,
               minWidth: "120px",
             }}
             draggable={isReady && !isTrimming}
+            onClick={() => {
+              if (isReady) {
+                setTimelineSelection(block.clipId, "transcript-clip");
+              }
+            }}
             onDragStart={(e) => handleDragStart(e, block.clipId, index)}
             onDragOver={(e) => handleDragOver(e, index)}
             onDragLeave={() => setDragOverIndex(null)}
@@ -382,21 +395,6 @@ const TranscriptClipsTrack = () => {
                   </span>
                 )}
               </div>
-
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removeClip(block.clipId);
-                }}
-                className={cn(
-                  "p-1.5 rounded-lg transition-all",
-                  isTranscribing || hasError
-                    ? "hover:bg-black/10 text-current opacity-50 hover:opacity-100"
-                    : "hover:bg-white/20 text-white/50 hover:text-white"
-                )}
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
             </div>
 
             {/* Right trim handle */}

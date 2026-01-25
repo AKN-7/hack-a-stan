@@ -1,12 +1,12 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from "react";
-import { Image, Type, Music, Shapes, Trash2, Film } from "lucide-react";
+import { Image, Type, Music, Shapes, Film } from "lucide-react";
 import useStore from "../store/use-store";
 import useTranscriptStore from "../store/use-transcript-store";
 import { useCurrentPlayerFrame } from "../hooks/use-current-frame";
 import { cn } from "@/lib/utils";
 import { ITrackItem } from "@designcombo/types";
 import { dispatch } from "@designcombo/events";
-import { EDIT_OBJECT, LAYER_DELETE } from "@designcombo/state";
+import { EDIT_OBJECT } from "@designcombo/state";
 
 // Track type configuration
 const TRACK_CONFIG: Record<string, { icon: React.ElementType; label: string; color: string; bgColor: string; hoverBg: string }> = {
@@ -28,14 +28,13 @@ interface GroupedTracks {
 type DragMode = "move" | "trim-left" | "trim-right" | null;
 
 const OverlayTracks = () => {
-  const { trackItemsMap, trackItemIds, fps, playerRef, setState } = useStore();
+  const { trackItemsMap, trackItemIds, fps, playerRef, setState, selectedTimelineItemId, setTimelineSelection, clearTimelineSelection } = useStore();
   const getTotalDurationMs = useTranscriptStore((s) => s.getTotalDurationMs);
   const currentFrame = useCurrentPlayerFrame(playerRef);
 
   // Drag state
   const [dragItemId, setDragItemId] = useState<string | null>(null);
   const [dragMode, setDragMode] = useState<DragMode>(null);
-  const [hoveredItemId, setHoveredItemId] = useState<string | null>(null);
   const dragStartRef = useRef<{
     startX: number;
     originalFrom: number;
@@ -238,34 +237,17 @@ const OverlayTracks = () => {
     };
   }, [dragItemId, dragMode]);
 
-  // Handle delete
-  const handleDelete = useCallback((e: React.MouseEvent, itemId: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    // Update Zustand store directly for immediate UI feedback
-    const newTrackItemsMap = { ...trackItemsMap };
-    delete newTrackItemsMap[itemId];
-    const newTrackItemIds = trackItemIds.filter(id => id !== itemId);
-    setState({
-      trackItemsMap: newTrackItemsMap,
-      trackItemIds: newTrackItemIds,
-    });
-
-    // Also dispatch to DesignCombo state manager for persistence
-    dispatch(LAYER_DELETE, {
-      payload: {
-        trackItemIds: [itemId],
-      },
-    });
-  }, [trackItemsMap, trackItemIds, setState]);
-
-  // Handle click to seek
+  // Handle click to seek (and clear selection if clicking empty space)
   const handleTrackClick = useCallback((e: React.MouseEvent) => {
     const trackEl = (e.target as HTMLElement).closest('.track-content') as HTMLElement;
     if (!trackEl || !playerRef?.current || totalDurationMs <= 0) return;
     if (dragItemId) return;
-    if ((e.target as HTMLElement).closest('.overlay-item')) return;
+
+    // Clear selection if clicking empty space (not on an overlay item)
+    const clickedOnItem = (e.target as HTMLElement).closest('.overlay-item');
+    if (!clickedOnItem) {
+      clearTimelineSelection();
+    }
 
     const rect = trackEl.getBoundingClientRect();
     const x = e.clientX - rect.left;
@@ -274,7 +256,7 @@ const OverlayTracks = () => {
     const targetFrame = Math.round((targetMs / 1000) * fps);
 
     playerRef.current.seekTo(targetFrame);
-  }, [playerRef, totalDurationMs, fps, dragItemId]);
+  }, [playerRef, totalDurationMs, fps, dragItemId, clearTimelineSelection]);
 
   // Don't render if no overlay items
   if (sortedTypes.length === 0) {
@@ -332,7 +314,7 @@ const OverlayTracks = () => {
                 const leftPercent = (startMs / totalDurationMs) * 100;
                 const widthPercent = (durationMs / totalDurationMs) * 100;
                 const isDragging = dragItemId === item.id;
-                const isHovered = hoveredItemId === item.id;
+                const isSelected = selectedTimelineItemId === item.id;
 
                 // Get item preview text
                 const previewText = type === "video-broll"
@@ -350,7 +332,8 @@ const OverlayTracks = () => {
                       "overlay-item absolute top-1.5 bottom-1.5 rounded-lg flex items-center text-white text-[10px] font-medium truncate transition-all",
                       config.bgColor,
                       isDragging ? "ring-2 ring-white shadow-lg z-20" : "z-10",
-                      !isDragging && "cursor-grab active:cursor-grabbing"
+                      !isDragging && "cursor-pointer",
+                      isSelected && "ring-2 ring-primary ring-offset-1 ring-offset-background shadow-lg"
                     )}
                     style={{
                       left: `${leftPercent}%`,
@@ -358,15 +341,9 @@ const OverlayTracks = () => {
                       minWidth: "60px",
                     }}
                     title={`${previewText} (${formatTime(startMs)} - ${formatTime(endMs)})`}
-                    onMouseEnter={() => setHoveredItemId(item.id)}
-                    onMouseLeave={() => setHoveredItemId(null)}
-                    onClick={(e) => {
-                      // If not dragging, seek to this item's start time
-                      if (!dragItemId && playerRef?.current) {
-                        e.stopPropagation();
-                        const targetFrame = Math.round((startMs / 1000) * fps);
-                        playerRef.current.seekTo(targetFrame);
-                      }
+                    onClick={() => {
+                      // Select this item (seek handled by track click)
+                      setTimelineSelection(item.id, "overlay-item");
                     }}
                     onMouseDown={(e) => handleDragStart(e, item.id, "move", item)}
                   >
@@ -388,20 +365,6 @@ const OverlayTracks = () => {
                     <div className="flex-1 px-3 truncate">
                       {previewText}
                     </div>
-
-                    {/* Delete button - show on hover */}
-                    {isHovered && !isDragging && (
-                      <button
-                        className="absolute right-6 top-1/2 -translate-y-1/2 p-1 rounded bg-black/30 hover:bg-red-500 transition-colors z-20"
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }}
-                        onClick={(e) => handleDelete(e, item.id)}
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    )}
 
                     {/* Right trim handle */}
                     <div

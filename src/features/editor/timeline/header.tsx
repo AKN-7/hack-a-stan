@@ -1,12 +1,14 @@
 import { Button } from "@/components/ui/button";
 import { dispatch } from "@designcombo/events";
 import { PLAYER_PAUSE, PLAYER_PLAY } from "../constants/events";
+import { LAYER_DELETE } from "@designcombo/state";
 import { frameToTimeString, timeToString } from "../utils/time";
 import useStore from "../store/use-store";
 import useTranscriptStore from "../store/use-transcript-store";
 import { useCurrentPlayerFrame } from "../hooks/use-current-frame";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { useIsMobile } from "@/hooks/use-media-query";
+import { Trash2 } from "lucide-react";
 
 const IconPlayerPlayFilled = ({ size }: { size: number }) => (
   <svg
@@ -70,12 +72,23 @@ const IconPlayerSkipForward = ({ size }: { size: number }) => (
 const Header = () => {
   const [playing, setPlaying] = useState(false);
   const isMobile = useIsMobile();
-  const { fps, playerRef, duration: storeDurationMs } = useStore();
+  const {
+    fps,
+    playerRef,
+    duration: storeDurationMs,
+    selectedTimelineItemId,
+    selectedTimelineItemType,
+    clearTimelineSelection,
+    trackItemsMap,
+    trackItemIds,
+    setState
+  } = useStore();
 
   // Subscribe to clips and clipOrder to trigger re-renders when they change
   const clips = useTranscriptStore((s) => s.clips);
   const clipOrder = useTranscriptStore((s) => s.clipOrder);
   const getTotalDurationMs = useTranscriptStore((s) => s.getTotalDurationMs);
+  const removeClip = useTranscriptStore((s) => s.removeClip);
 
   const currentFrame = useCurrentPlayerFrame(playerRef);
 
@@ -111,6 +124,33 @@ const Header = () => {
     playerRef?.current?.seekTo(totalFrames);
   };
 
+  const handleDelete = useCallback(() => {
+    if (!selectedTimelineItemId) return;
+
+    if (selectedTimelineItemType === "transcript-clip") {
+      // Delete transcript clip
+      removeClip(selectedTimelineItemId);
+    } else if (selectedTimelineItemType === "overlay-item") {
+      // Delete overlay item (image, text, audio, etc.)
+      const newTrackItemsMap = { ...trackItemsMap };
+      delete newTrackItemsMap[selectedTimelineItemId];
+      const newTrackItemIds = trackItemIds.filter(id => id !== selectedTimelineItemId);
+      setState({
+        trackItemsMap: newTrackItemsMap,
+        trackItemIds: newTrackItemIds,
+      });
+
+      dispatch(LAYER_DELETE, {
+        payload: {
+          trackItemIds: [selectedTimelineItemId],
+        },
+      });
+    }
+
+    // Clear selection after delete
+    clearTimelineSelection();
+  }, [selectedTimelineItemId, selectedTimelineItemType, removeClip, trackItemsMap, trackItemIds, setState, clearTimelineSelection]);
+
   useEffect(() => {
     const player = playerRef?.current;
     if (!player) return;
@@ -127,11 +167,48 @@ const Header = () => {
     };
   }, [playerRef]);
 
+  // Clear selection when clicking outside the timeline
+  useEffect(() => {
+    if (!selectedTimelineItemId) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Check if click is inside timeline area
+      const isInTimeline = target.closest('[data-timeline]');
+      const isDeleteButton = target.closest('[data-delete-button]');
+      if (!isInTimeline && !isDeleteButton) {
+        clearTimelineSelection();
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [selectedTimelineItemId, clearTimelineSelection]);
+
   return (
     <div className={`h-12 md:h-14 flex items-center bg-white border-b border-border px-3 md:px-4 ${
-      isMobile ? 'justify-between' : 'justify-center gap-3'
+      isMobile ? 'justify-between' : 'gap-3'
     }`}>
-      {/* Time display - left on mobile, after controls on desktop */}
+      {/* Delete button - aligned left, shows when item selected */}
+      {selectedTimelineItemId ? (
+        <Button
+          onClick={handleDelete}
+          variant="ghost"
+          size="sm"
+          data-delete-button
+          className="h-8 px-3 rounded-lg text-muted-foreground hover:text-red-600 hover:bg-red-50"
+        >
+          <Trash2 className="w-4 h-4 mr-1.5" />
+          Delete
+        </Button>
+      ) : (
+        <div className="w-[85px]" />
+      )}
+
+      {/* Spacer to center controls */}
+      {!isMobile && <div className="flex-1" />}
+
+      {/* Time display - left on mobile */}
       {isMobile && (
         <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-muted font-mono">
           <span className="text-sm text-foreground font-semibold tabular-nums">
@@ -195,6 +272,10 @@ const Header = () => {
           </span>
         </div>
       )}
+
+      {/* Right spacer to balance left delete button (desktop) */}
+      {!isMobile && <div className="flex-1" />}
+      {!isMobile && <div className="w-[85px]" />}
     </div>
   );
 };
