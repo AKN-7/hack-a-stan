@@ -13,7 +13,6 @@ import {
   ChevronDown,
   Film,
   Plus,
-  Upload,
 } from "lucide-react";
 import useTranscriptStore, { TranscriptWord } from "../store/use-transcript-store";
 import useStore from "../store/use-store";
@@ -275,62 +274,89 @@ export const Transcript = () => {
         </div>
       </div>
 
-      {/* Status Section */}
-      {(activeUploads.some(u => u.status === "uploading") ||
-        transcribingClips.length > 0 ||
-        pendingClips.length > 0 ||
-        errorClips.length > 0) && (
-        <div className="px-4 py-3 space-y-2 bg-muted/50">
-          {/* Uploading files */}
-          {activeUploads.filter(u => u.status === "uploading").length > 0 && (
-            <div className="space-y-2">
-              {activeUploads
-                .filter(u => u.status === "uploading")
-                .map((upload) => (
-                <div key={upload.id} className="flex flex-col gap-1.5 p-2.5 rounded-lg bg-blue-50 border border-blue-100">
-                  <div className="flex items-center gap-2">
-                    <Upload className="w-3.5 h-3.5 text-blue-600" />
-                    <span className="text-sm font-medium text-blue-700 truncate flex-1">
-                      {upload.file?.name || "Uploading..."}
+      {/* Consolidated Status Bar */}
+      {(() => {
+        const uploadingUploads = activeUploads.filter(u => u.status === "uploading");
+        const uploadingCount = uploadingUploads.length;
+        const transcribingCount = transcribingClips.length;
+        const pendingCount = pendingClips.length;
+        const errorCount = errorClips.length;
+        const readyCount = clipOrder.filter(id => clips[id]?.status === "ready").length;
+        const totalClips = clipOrder.length;
+
+        // Calculate average upload progress
+        const avgUploadProgress = uploadingCount > 0
+          ? Math.round(uploadingUploads.reduce((sum, u) => sum + (u.progress || 0), 0) / uploadingCount)
+          : 0;
+
+        // Overall progress: uploads + transcriptions complete
+        const completedSteps = readyCount;
+        const totalSteps = totalClips + uploadingCount;
+        const overallProgress = totalSteps > 0 ? Math.round((completedSteps / totalSteps) * 100) : 0;
+
+        const isActive = uploadingCount > 0 || transcribingCount > 0 || pendingCount > 0;
+
+        if (!isActive && errorCount === 0) return null;
+
+        return (
+          <div className="px-4 py-2.5 border-b border-border/50">
+            {/* Single status line */}
+            <div className="flex items-center gap-3 text-xs">
+              {(uploadingCount > 0 || transcribingCount > 0) && (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-primary shrink-0" />
+              )}
+
+              <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
+                {uploadingCount > 0 && (
+                  <span className="text-blue-600 font-medium">
+                    Uploading {uploadingCount} {avgUploadProgress > 0 && `(${avgUploadProgress}%)`}
+                  </span>
+                )}
+                {uploadingCount > 0 && transcribingCount > 0 && (
+                  <span className="text-muted-foreground">•</span>
+                )}
+                {transcribingCount > 0 && (
+                  <span className="text-amber-600 font-medium">
+                    Transcribing {transcribingCount}
+                  </span>
+                )}
+                {(uploadingCount > 0 || transcribingCount > 0) && pendingCount > 0 && (
+                  <span className="text-muted-foreground">•</span>
+                )}
+                {pendingCount > 0 && (
+                  <span className="text-muted-foreground">
+                    {pendingCount} queued
+                  </span>
+                )}
+                {readyCount > 0 && totalClips > 0 && (
+                  <>
+                    <span className="text-muted-foreground">•</span>
+                    <span className="text-green-600 font-medium">
+                      {readyCount}/{totalClips} ready
                     </span>
-                    <span className="text-xs font-semibold text-blue-600">
-                      {upload.progress || 0}%
-                    </span>
-                  </div>
-                  <div className="w-full h-1.5 bg-blue-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-blue-500 rounded-full transition-all duration-300 ease-out"
-                      style={{ width: `${upload.progress || 0}%` }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          {transcribingClips.length > 0 && (
-            <div className="flex items-center gap-2 text-sm">
-              <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-amber-50 text-amber-700">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                <span className="font-medium">Transcribing {transcribingClips.length} clip(s)...</span>
+                  </>
+                )}
               </div>
+
+              {errorCount > 0 && (
+                <span className="text-red-500 font-medium shrink-0">
+                  {errorCount} failed
+                </span>
+              )}
             </div>
-          )}
-          {pendingClips.length > 0 && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <FileText className="w-4 h-4" />
-              {pendingClips.length} clip(s) waiting...
-            </div>
-          )}
-          {errorClips.length > 0 && (
-            <div className="flex items-center gap-2 text-sm">
-              <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-red-50 text-red-600">
-                <AlertCircle className="w-3.5 h-3.5" />
-                <span className="font-medium">{errorClips.length} clip(s) failed</span>
+
+            {/* Single progress bar */}
+            {isActive && (
+              <div className="mt-2 w-full h-1 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary rounded-full transition-all duration-500 ease-out"
+                  style={{ width: `${Math.max(overallProgress, uploadingCount > 0 ? avgUploadProgress * 0.3 : 5)}%` }}
+                />
               </div>
-            </div>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        );
+      })()}
 
       {/* Empty State */}
       {clipOrder.length === 0 && !activeUploads.some(u => u.status === "uploading") && (
@@ -343,6 +369,38 @@ export const Transcript = () => {
             <Plus className="w-4 h-4 mr-2" />
             Add clip
           </Button>
+        </div>
+      )}
+
+      {/* Skeleton Transcript - Shows during transcription */}
+      {clipOrder.length > 0 && transcribingClips.length > 0 && !clipOrder.some(id => clips[id]?.status === "ready") && (
+        <div className="flex-1 overflow-hidden p-4">
+          <div className="space-y-4 animate-pulse">
+            {/* Fake paragraph blocks */}
+            {[...Array(4)].map((_, blockIdx) => (
+              <div key={blockIdx} className="space-y-2">
+                {/* Lines within each block */}
+                {[...Array(3 + Math.floor(Math.random() * 2))].map((_, lineIdx) => (
+                  <div key={lineIdx} className="flex flex-wrap gap-1.5">
+                    {/* Words within each line */}
+                    {[...Array(6 + Math.floor(Math.random() * 4))].map((_, wordIdx) => (
+                      <div
+                        key={wordIdx}
+                        className="h-5 bg-muted rounded"
+                        style={{
+                          width: `${40 + Math.random() * 60}px`,
+                          animationDelay: `${(blockIdx * 5 + lineIdx * 3 + wordIdx) * 50}ms`
+                        }}
+                      />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground text-center mt-6">
+            Transcribing your video...
+          </p>
         </div>
       )}
 

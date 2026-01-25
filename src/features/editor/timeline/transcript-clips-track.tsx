@@ -25,6 +25,7 @@ interface ClipBlock {
   trimStartMs: number;
   trimEndMs: number;
   fullDurationMs: number;
+  hasUserTrim: boolean; // Whether user explicitly set a trim (vs automatic gap optimization)
 }
 
 type TrimSide = "left" | "right" | null;
@@ -97,6 +98,7 @@ const TranscriptClipsTrack = () => {
         trimStartMs: clip.trim?.startMs ?? 0,
         trimEndMs: clip.trim?.endMs ?? fullDurationMs,
         fullDurationMs,
+        hasUserTrim: clip.trim !== undefined, // Only true if user explicitly trimmed
       });
 
       offsetMs += durationMs;
@@ -306,7 +308,8 @@ const TranscriptClipsTrack = () => {
           ? (block.durationMs / totalDurationMs) * 100
           : 100 / clipBlocks.length;
 
-        const isTrimmed = block.fullDurationMs > block.durationMs;
+        // Only show trim badge if user explicitly trimmed (not just gap optimization from magic)
+        const isTrimmed = block.hasUserTrim && block.fullDurationMs > block.durationMs;
         const style = getClipStyle(index);
 
         return (

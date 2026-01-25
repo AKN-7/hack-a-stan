@@ -21,6 +21,7 @@ const Scene = forwardRef<
   // Check if we have transcript clips (video content)
   const clipOrder = useTranscriptStore((s) => s.clipOrder);
   const hasTranscriptClips = clipOrder.length > 0;
+
   const { zoom, handlePinch, recalculateZoom } = useZoom(
     containerRef as React.RefObject<HTMLDivElement>,
     size

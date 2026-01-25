@@ -34,9 +34,55 @@ import { ShimmeringText } from "@/components/ui/shimmering-text";
 import useChatStore, { ChatMessage, ToolCall } from "@/features/chat/use-chat-store";
 import useTranscriptStore, { MagicProcessingResult } from "@/features/editor/store/use-transcript-store";
 import useStore from "@/features/editor/store/use-store";
+import { useDownloadState } from "@/features/editor/store/use-download-state";
+import StateManager from "@designcombo/state";
+import { generateId } from "@designcombo/timeline";
+import type { IDesign } from "@designcombo/types";
 import { executeToolCall } from "@/features/chat/tool-executor";
 import type Anthropic from "@anthropic-ai/sdk";
 import { ChevronDown, ChevronUp, Check, Undo2, Film, Type as TypeIcon } from "lucide-react";
+
+// Progress hints that rotate during AI analysis
+const PROGRESS_HINTS = [
+  "Finding filler words like 'um' and 'uh'...",
+  "Detecting duplicate takes...",
+  "Analyzing speech patterns...",
+  "Looking for stammering and false starts...",
+  "Optimizing clip order for narrative flow...",
+  "Generating attention-grabbing hook...",
+  "Calculating time savings...",
+];
+
+// Hook for rotating progress hints
+function useRotatingHint(isActive: boolean, currentStatus: string) {
+  const [hintIndex, setHintIndex] = useState(0);
+
+  useEffect(() => {
+    if (!isActive) {
+      setHintIndex(0);
+      return;
+    }
+
+    // If there's a real status from the store, use it
+    if (currentStatus && currentStatus !== "Analyzing your clips...") {
+      return;
+    }
+
+    // Rotate through hints every 2 seconds
+    const interval = setInterval(() => {
+      setHintIndex((prev) => (prev + 1) % PROGRESS_HINTS.length);
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [isActive, currentStatus]);
+
+  // If there's a real status, use it; otherwise use rotating hint
+  if (currentStatus && currentStatus !== "Analyzing your clips...") {
+    return currentStatus;
+  }
+
+  return PROGRESS_HINTS[hintIndex];
+}
 
 // Format milliseconds to readable time
 function formatTime(ms: number): string {
@@ -70,7 +116,27 @@ export function Chat() {
   const editorStore = useStore();
 
   // Get magic processing result for display
-  const { magicProcessingResult, clearMagicProcessingResult, isProcessing, processingStatus } = useTranscriptStore();
+  const { magicProcessingResult, clearMagicProcessingResult, isProcessing, processingStatus, processingStartTime, processingStep } = useTranscriptStore();
+
+  // Get rotating hint during processing
+  const displayStatus = useRotatingHint(isProcessing, processingStatus);
+
+  // Track elapsed time during processing
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!isProcessing || !processingStartTime) {
+      setElapsedSeconds(0);
+      return;
+    }
+
+    // Update every 100ms for smooth counter
+    const interval = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - processingStartTime) / 1000));
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [isProcessing, processingStartTime]);
 
   // Scroll to bottom when messages change or magic processing completes
   useEffect(() => {
@@ -479,11 +545,37 @@ export function Chat() {
                     <Loader2 className="h-4 w-4 text-primary animate-spin" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold text-foreground">Magic Processing...</div>
-                    <div className="text-xs text-muted-foreground truncate">
-                      {processingStatus || "Analyzing your clips..."}
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-sm font-semibold text-foreground">Magic Processing...</div>
+                      <div className="text-xs font-medium text-primary tabular-nums">
+                        {elapsedSeconds}s
+                      </div>
+                    </div>
+                    <div className="text-xs text-muted-foreground truncate transition-all duration-300">
+                      {displayStatus}
                     </div>
                   </div>
+                </div>
+
+                {/* Progress steps indicator */}
+                <div className="mt-3 flex items-center gap-1">
+                  {[1, 2, 3].map((step) => (
+                    <div key={step} className="flex-1 flex items-center gap-1">
+                      <div
+                        className={cn(
+                          "h-1.5 flex-1 rounded-full transition-all duration-300",
+                          processingStep >= step
+                            ? "bg-primary"
+                            : "bg-primary/20"
+                        )}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-1.5 flex justify-between text-[10px] text-muted-foreground">
+                  <span className={cn(processingStep >= 1 && "text-primary font-medium")}>Filler words</span>
+                  <span className={cn(processingStep >= 2 && "text-primary font-medium")}>AI analysis</span>
+                  <span className={cn(processingStep >= 3 && "text-primary font-medium")}>Pacing</span>
                 </div>
               </div>
             )}
@@ -783,46 +875,158 @@ function CollapsedToolCalls({ toolCalls }: { toolCalls: ToolCall[] }) {
   );
 }
 
+// Animated count-up hook for time saved
+function useCountUp(end: number, duration: number = 1000) {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    let startTime: number;
+    let animationFrame: number;
+
+    const animate = (currentTime: number) => {
+      if (!startTime) startTime = currentTime;
+      const progress = Math.min((currentTime - startTime) / duration, 1);
+
+      // Easing function for satisfying feel
+      const easeOut = 1 - Math.pow(1 - progress, 3);
+      setCount(easeOut * end);
+
+      if (progress < 1) {
+        animationFrame = requestAnimationFrame(animate);
+      }
+    };
+
+    animationFrame = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [end, duration]);
+
+  return count;
+}
+
 // Magic Processing Summary - shows results of auto-magic processing
 function MagicProcessingSummary({ result, onDismiss }: { result: MagicProcessingResult; onDismiss?: () => void }) {
-  const [isExpanded, setIsExpanded] = useState(true);
-  const { restoreClip, clipOrder, clips } = useTranscriptStore();
+  const [isExpanded, setIsExpanded] = useState(false);
+  const { restoreClip, restoreAllWords, clips, resetMagicProcessing, clearMagicProcessingResult } = useTranscriptStore();
+  const { actions } = useDownloadState();
+  const editorStore = useStore();
 
   const hasChanges = result.fillerCount > 0 || result.aiCutsCount > 0 || result.clipsRemoved > 0 || result.textHook;
 
   if (!hasChanges) return null;
 
-  const timeSavedSec = (result.timeSavedMs / 1000).toFixed(1);
+  const timeSavedSec = result.timeSavedMs / 1000;
+  const animatedTime = useCountUp(timeSavedSec, 1200);
+  const totalCuts = result.fillerCount + result.aiCutsCount;
+
+  // Handle export button click
+  const handleExport = () => {
+    const stateManager = (window as any).__stateManager;
+    if (stateManager) {
+      const data: IDesign = {
+        id: generateId(),
+        ...stateManager.toJSON()
+      };
+      actions.setState({ payload: data });
+      actions.startExport();
+    }
+  };
+
+  // Handle undo all - reverses everything magic did
+  const handleUndoAll = () => {
+    // Restore all deleted words
+    restoreAllWords();
+    // Restore all removed clips
+    if (result.removedClipIds) {
+      result.removedClipIds.forEach(clipId => restoreClip(clipId));
+    }
+    // Clear the text hook and emphasis points
+    resetMagicProcessing();
+    // Clear the result card
+    clearMagicProcessingResult();
+  };
 
   return (
-    <div className="w-full rounded-xl border border-primary/20 bg-gradient-to-br from-primary/5 to-purple-500/5 overflow-hidden">
-      {/* Header */}
-      <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full px-4 py-3 flex items-center gap-3 hover:bg-black/5 transition-colors"
-      >
-        <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-          <Sparkles className="h-4 w-4 text-primary" />
+    <div className="w-full rounded-2xl border-2 border-green-200 bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 overflow-hidden shadow-lg shadow-green-100/50">
+      {/* Hero Section - Time Saved */}
+      <div className="px-4 pt-5 pb-4 text-center">
+        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-100 text-green-700 text-xs font-medium mb-3">
+          <Sparkles className="h-3.5 w-3.5" />
+          Magic Complete
         </div>
-        <div className="flex-1 min-w-0 text-left">
-          <div className="text-sm font-semibold text-foreground">Magic Complete</div>
-          <div className="text-xs text-muted-foreground">
-            Saved {timeSavedSec}s · {result.fillerCount + result.aiCutsCount} cuts
-          </div>
+
+        {/* Big Time Saved Number */}
+        <div className="mb-1">
+          <span className="text-5xl font-bold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent">
+            {animatedTime.toFixed(1)}s
+          </span>
         </div>
-        {isExpanded ? (
-          <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" />
-        ) : (
-          <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-        )}
-      </button>
+        <div className="text-sm text-green-700 font-medium mb-4">
+          saved from your video
+        </div>
+
+        {/* Stats Row */}
+        <div className="flex justify-center gap-4 mb-4">
+          {totalCuts > 0 && (
+            <div className="text-center">
+              <div className="text-lg font-bold text-foreground">{totalCuts}</div>
+              <div className="text-xs text-muted-foreground">words cut</div>
+            </div>
+          )}
+          {result.clipsRemoved > 0 && (
+            <div className="text-center">
+              <div className="text-lg font-bold text-foreground">{result.clipsRemoved}</div>
+              <div className="text-xs text-muted-foreground">bad takes</div>
+            </div>
+          )}
+          {result.textHook && (
+            <div className="text-center">
+              <div className="text-lg font-bold text-foreground">1</div>
+              <div className="text-xs text-muted-foreground">hook added</div>
+            </div>
+          )}
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex gap-2 justify-center">
+          <Button
+            onClick={handleExport}
+            className="bg-green-600 hover:bg-green-700 text-white shadow-md shadow-green-200"
+          >
+            <Play className="h-4 w-4 mr-1.5 fill-current" />
+            Export Video
+          </Button>
+          <Button
+            variant="outline"
+            onClick={handleUndoAll}
+            className="border-green-200 text-green-700 hover:bg-green-50"
+          >
+            <RotateCcw className="h-4 w-4 mr-1.5" />
+            Undo All
+          </Button>
+        </div>
+      </div>
+
+      {/* Expandable Details */}
+      <div className="border-t border-green-200">
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="w-full px-4 py-2.5 flex items-center justify-center gap-2 hover:bg-green-50/50 transition-colors text-sm text-green-700"
+        >
+          <span>{isExpanded ? "Hide" : "Show"} details</span>
+          {isExpanded ? (
+            <ChevronUp className="h-4 w-4" />
+          ) : (
+            <ChevronDown className="h-4 w-4" />
+          )}
+        </button>
+      </div>
 
       {/* Expanded content */}
       {isExpanded && (
-        <div className="px-4 pb-4 space-y-3">
+        <div className="px-4 pb-4 space-y-3 border-t border-green-100 bg-white/50">
           {/* Clips removed */}
           {result.clipsRemoved > 0 && result.removedClipIds && (
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 pt-3">
               <div className="flex items-center gap-1.5 text-xs font-medium text-red-600">
                 <Film className="h-3.5 w-3.5" />
                 <span>{result.clipsRemoved} clip{result.clipsRemoved > 1 ? "s" : ""} removed</span>

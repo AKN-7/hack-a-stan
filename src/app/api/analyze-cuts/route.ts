@@ -31,9 +31,17 @@ export async function POST(request: NextRequest) {
       `=== CLIP ${clip.clipIndex} (ID: ${clip.clipId}) ===\n${clip.text}`
     ).join("\n\n");
 
-    const wordsContext = clips.map(clip =>
-      `CLIP ${clip.clipIndex} (${clip.clipId}) WORDS:\n${clip.words.map(w => `  "${w.text}" [${w.id}]`).join("\n")}`
-    ).join("\n\n---\n\n");
+    // Only include word IDs for clips with < 50 words to keep prompt small
+    // For longer clips, AI will match by text position
+    const wordsContext = clips.map(clip => {
+      if (clip.words.length <= 50) {
+        return `CLIP ${clip.clipIndex} WORDS:\n${clip.words.map(w => `"${w.text}" [${w.id}]`).join(" ")}`;
+      }
+      // For longer clips, just provide first/last few word IDs as anchors
+      const first5 = clip.words.slice(0, 5).map(w => `"${w.text}" [${w.id}]`).join(" ");
+      const last5 = clip.words.slice(-5).map(w => `"${w.text}" [${w.id}]`).join(" ");
+      return `CLIP ${clip.clipIndex} (${clip.words.length} words): ${first5} ... ${last5}`;
+    }).join("\n");
 
     const systemPrompt = `You are an expert video editor creating ONE polished video from multiple raw clips.
 
@@ -152,6 +160,7 @@ Return ONLY valid JSON.`;
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-20250514",
       max_tokens: 4096,
+      temperature: 0, // Low randomness - mostly consistent but slight variation
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     });

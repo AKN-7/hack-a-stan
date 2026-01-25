@@ -56,11 +56,28 @@ const UploadLanding = () => {
 
       video.onseeked = () => {
         const canvas = document.createElement("canvas");
-        canvas.width = 160;
-        canvas.height = 90;
+        // Use 9:16 vertical aspect ratio to match final output
+        canvas.width = 90;
+        canvas.height = 160;
         const ctx = canvas.getContext("2d");
         if (ctx) {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          // Center-crop the video frame to fit 9:16
+          const videoAspect = video.videoWidth / video.videoHeight;
+          const canvasAspect = canvas.width / canvas.height;
+
+          let sx = 0, sy = 0, sw = video.videoWidth, sh = video.videoHeight;
+
+          if (videoAspect > canvasAspect) {
+            // Video is wider - crop sides
+            sw = video.videoHeight * canvasAspect;
+            sx = (video.videoWidth - sw) / 2;
+          } else {
+            // Video is taller - crop top/bottom
+            sh = video.videoWidth / canvasAspect;
+            sy = (video.videoHeight - sh) / 2;
+          }
+
+          ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
           resolve(canvas.toDataURL("image/jpeg", 0.7));
         } else {
           resolve(null);
@@ -168,12 +185,12 @@ const UploadLanding = () => {
             </div>
 
             {/* Video thumbnails grid with progress - scrollable container */}
-            <div className="w-full max-w-xl max-h-[40vh] overflow-y-auto rounded-xl">
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 p-1">
+            <div className="w-full max-w-xl max-h-[50vh] overflow-y-auto rounded-xl">
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 p-1">
               {uploadsWithThumbnails.map((upload) => (
                 <div
                   key={upload.id}
-                  className="relative aspect-video rounded-lg overflow-hidden bg-zinc-800 border border-zinc-700"
+                  className="relative aspect-[9/16] rounded-lg overflow-hidden bg-zinc-800 border border-zinc-700"
                 >
                   {/* Thumbnail */}
                   {upload.thumbnail ? (

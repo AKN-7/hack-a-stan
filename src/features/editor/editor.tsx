@@ -34,6 +34,11 @@ const stateManager = new StateManager({
 	},
 });
 
+// Expose state manager globally for export functionality
+if (typeof window !== 'undefined') {
+	(window as any).__stateManager = stateManager;
+}
+
 const Editor = ({ tempId, id }: { tempId?: string; id?: string }) => {
 	const [projectName, setProjectName] = useState<string>("Untitled video");
 	const isMobile = useIsMobile();

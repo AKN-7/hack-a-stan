@@ -15,7 +15,7 @@ const getEditorStore = () => import("./use-store").then(m => m.default);
 
 // Debounce timer for auto-magic processing (wait for all clips to finish)
 let autoMagicDebounceTimer: NodeJS.Timeout | null = null;
-const AUTO_MAGIC_DEBOUNCE_MS = 2000; // Wait 2 seconds after last transcription
+const AUTO_MAGIC_DEBOUNCE_MS = 500; // Wait 500ms after last transcription (reduced from 2s)
 
 // Word with timing and clip association
 export interface TranscriptWord {
@@ -116,6 +116,8 @@ interface ITranscriptStore {
   setAutoProcessEnabled: (enabled: boolean) => void;
   isProcessing: boolean;
   processingStatus: string;
+  processingStartTime: number | null; // When processing started (for elapsed time)
+  processingStep: number; // Current step (1-4)
   _hasRunMagicProcessing: boolean; // Prevents running twice
   magicProcessingResult: MagicProcessingResult | null; // Latest result for chat display
   clearMagicProcessingResult: () => void;
@@ -225,10 +227,12 @@ const useTranscriptStore = create<ITranscriptStore>()(
       setAutoProcessEnabled: (enabled: boolean) => set({ autoProcessEnabled: enabled }),
       isProcessing: false,
       processingStatus: "",
+      processingStartTime: null,
+      processingStep: 0,
       _hasRunMagicProcessing: false,
       magicProcessingResult: null,
       clearMagicProcessingResult: () => set({ magicProcessingResult: null }),
-      resetMagicProcessing: () => set({ _hasRunMagicProcessing: false, magicProcessingResult: null, emphasisPoints: [], textHook: null }),
+      resetMagicProcessing: () => set({ _hasRunMagicProcessing: false, magicProcessingResult: null, emphasisPoints: [], textHook: null, processingStep: 0, processingStartTime: null }),
 
       // AI-detected emphasis points for zoom effects
       emphasisPoints: [],
@@ -770,12 +774,6 @@ const useTranscriptStore = create<ITranscriptStore>()(
             },
           },
         }));
-
-        // Show/update progress notification (single toast that updates)
-        const { clips: updatedClips, clipOrder } = get();
-        const readyCount = clipOrder.filter(id => updatedClips[id]?.status === "ready").length;
-        const totalCount = clipOrder.length;
-        toast.success(`${readyCount}/${totalCount} clips ready`, { id: "transcription-progress" });
 
         // Check if we should auto-process (waits for ALL clips to be ready)
         // This replaces the manual filler word suggestion with automatic processing
@@ -1332,7 +1330,13 @@ const useTranscriptStore = create<ITranscriptStore>()(
         if (clipOrder.length === 0) return { fillerCount: 0, aiCutsCount: 0, clipsRemoved: 0, timeSavedMs: 0 };
 
         // Set processing state and mark as having run (prevents running twice)
-        set({ isProcessing: true, processingStatus: "Starting magic processing...", _hasRunMagicProcessing: true });
+        set({
+          isProcessing: true,
+          processingStatus: "Starting magic processing...",
+          processingStartTime: Date.now(),
+          processingStep: 1,
+          _hasRunMagicProcessing: true
+        });
 
         const durationBefore = get().getTotalDurationMs();
         let aiCutsCount = 0;
@@ -1345,7 +1349,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
 
         try {
           // Step 1: Remove basic filler words (um, uh, like, etc.)
-          set({ processingStatus: "Removing filler words..." });
+          set({ processingStatus: "Removing filler words...", processingStep: 1 });
           const fillerCount = autoRemoveFillerWords();
           console.log(`[Auto-Magic] Removed ${fillerCount} filler words`);
 
@@ -1354,7 +1358,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
           // - Which entire clips to remove (bad takes)
           // - Which words/phrases to cut (duplicates, stammering, false starts)
           // - Optimal clip ordering for narrative flow
-          set({ processingStatus: "AI analyzing all clips for cross-transcript optimization..." });
+          set({ processingStatus: "AI analyzing clips...", processingStep: 2 });
           try {
             // Build clip data for AI analysis - include ALL clips
             const clipData = clipOrder.map((clipId, index) => {
@@ -1486,7 +1490,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
           }
 
           // Step 3: Optimize pacing (set gap threshold)
-          set({ processingStatus: "Optimizing pacing..." });
+          set({ processingStatus: "Optimizing pacing...", processingStep: 3 });
           setGapThreshold(200); // Balanced - gaps >200ms get cut
 
           // Step 4: Transitions disabled - natural cuts with gap merging work better
@@ -1496,17 +1500,37 @@ const useTranscriptStore = create<ITranscriptStore>()(
           // Step 5: Apply AI-suggested clip order (if provided)
           if (aiSuggestedOrder && aiSuggestedOrder.length > 0) {
             set({ processingStatus: "Applying AI-optimized clip order..." });
-            // Filter to only include clips that still exist (some may have been removed)
+            // Filter to only include clips that still exist and aren't deleted
             const currentClips = get().clips;
-            const validOrder = aiSuggestedOrder.filter(id => currentClips[id] !== undefined);
+            const currentOrder = get().clipOrder;
+            const validOrder = aiSuggestedOrder.filter(id =>
+              currentClips[id] !== undefined && !currentClips[id].isDeleted
+            );
+
+            // IMPORTANT: Preserve any clips the AI didn't mention (append them at the end)
+            // This prevents clips from disappearing if AI response is incomplete
+            const mentionedClipIds = new Set([
+              ...aiSuggestedOrder,
+              ...removedClipIds, // clips AI explicitly removed
+            ]);
+            const unmentionedClips = currentOrder.filter(id =>
+              !mentionedClipIds.has(id) &&
+              currentClips[id] !== undefined &&
+              !currentClips[id].isDeleted
+            );
+
+            if (unmentionedClips.length > 0) {
+              console.log(`[Auto-Magic] Warning: AI didn't mention ${unmentionedClips.length} clips, preserving them:`, unmentionedClips);
+            }
+
+            const finalOrder = [...validOrder, ...unmentionedClips];
 
             // Check if order actually changes
-            const currentOrder = get().clipOrder;
-            const hasChanges = validOrder.some((id, i) => id !== currentOrder[i]);
+            const hasChanges = finalOrder.some((id, i) => id !== currentOrder[i]) || finalOrder.length !== currentOrder.length;
 
-            if (hasChanges && validOrder.length > 0) {
-              reorderClips(validOrder);
-              console.log(`[Auto-Magic] Applied AI-suggested order: ${validOrder.join(" → ")}`);
+            if (hasChanges && finalOrder.length > 0) {
+              reorderClips(finalOrder);
+              console.log(`[Auto-Magic] Applied AI-suggested order: ${finalOrder.join(" → ")}`);
               console.log(`[Auto-Magic] Reasoning: ${aiReasoning}`);
             }
           }
@@ -1515,23 +1539,8 @@ const useTranscriptStore = create<ITranscriptStore>()(
           const durationAfter = get().getTotalDurationMs();
           const timeSavedMs = durationBefore - durationAfter;
 
-          // Show success toast with comprehensive summary
           const totalWordsCut = fillerCount + aiCutsCount;
           const timeSavedSec = (timeSavedMs / 1000).toFixed(1);
-
-          if (totalWordsCut > 0 || clipsRemoved > 0 || timeSavedMs > 0) {
-            const parts: string[] = [];
-            if (clipsRemoved > 0) parts.push(`${clipsRemoved} bad takes removed`);
-            if (aiCutsCount > 0) parts.push(`${aiCutsCount} AI-detected cuts`);
-            if (fillerCount > 0) parts.push(`${fillerCount} filler words`);
-
-            toast.success(
-              `✨ Magic complete! ${parts.join(", ")}. Saved ${timeSavedSec}s`,
-              { duration: 6000 }
-            );
-          } else {
-            toast.success("✨ Magic complete! Your video looks clean already.", { duration: 3000 });
-          }
 
           console.log(`[Auto-Magic] Complete! Clips removed: ${clipsRemoved}, Words cut: ${totalWordsCut}, Time saved: ${timeSavedSec}s`);
 
@@ -1551,7 +1560,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
             completedAt: Date.now(),
           };
 
-          set({ isProcessing: false, processingStatus: "", magicProcessingResult: processingResult });
+          set({ isProcessing: false, processingStatus: "", processingStartTime: null, processingStep: 0, magicProcessingResult: processingResult });
 
           return {
             fillerCount,
@@ -1561,7 +1570,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
           };
         } catch (error) {
           console.error("[Auto-Magic] Processing failed:", error);
-          set({ isProcessing: false, processingStatus: "" });
+          set({ isProcessing: false, processingStatus: "", processingStartTime: null, processingStep: 0 });
           toast.error("Magic processing encountered an error");
           return { fillerCount: 0, aiCutsCount: 0, clipsRemoved: 0, timeSavedMs: 0 };
         }
