@@ -17,6 +17,16 @@ const CLIP_STYLES = [
 
 const getClipStyle = (index: number) => CLIP_STYLES[index % CLIP_STYLES.length];
 
+// Get stable color index from clipId (for clips without colorIndex set)
+const getStableColorIndex = (clipId: string): number => {
+  let hash = 0;
+  for (let i = 0; i < clipId.length; i++) {
+    hash = ((hash << 5) - hash) + clipId.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash) % CLIP_STYLES.length;
+};
+
 interface ClipBlock {
   clipId: string;
   durationMs: number;
@@ -317,7 +327,9 @@ const TranscriptClipsTrack = () => {
 
         // Only show trim badge if user explicitly trimmed (not just gap optimization from magic)
         const isTrimmed = block.hasUserTrim && block.fullDurationMs > block.durationMs;
-        const style = getClipStyle(index);
+        // Use clip's colorIndex for persistent colors across reordering
+        const clipData = clips[block.clipId];
+        const style = getClipStyle(clipData?.colorIndex ?? index);
 
         return (
           <div

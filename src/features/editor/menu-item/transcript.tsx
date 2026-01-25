@@ -1,13 +1,13 @@
 import { useCallback, useState, useRef, useEffect } from "react";
 import { dispatch } from "@designcombo/events";
+import { Reorder, useDragControls } from "framer-motion";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import {
   Loader2,
   Trash2,
   Clock,
-  ChevronUp,
-  ChevronDown,
+  GripVertical,
   Plus,
   Scissors,
   RotateCcw,
@@ -30,12 +30,177 @@ const CLIP_COLORS = [
 
 const getClipColor = (index: number) => CLIP_COLORS[index % CLIP_COLORS.length];
 
+// Get stable color index from clipId (for clips without colorIndex set)
+const getStableColorIndex = (clipId: string): number => {
+  let hash = 0;
+  for (let i = 0; i < clipId.length; i++) {
+    hash = ((hash << 5) - hash) + clipId.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash) % CLIP_COLORS.length;
+};
+
 // Format milliseconds to mm:ss
 const formatDuration = (ms: number): string => {
   const totalSeconds = Math.floor(ms / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+};
+
+// Draggable clip item component - uses useDragControls for smooth handle-only dragging
+interface ClipItemProps {
+  clipId: string;
+  index: number;
+  clip: {
+    words: TranscriptWord[];
+    colorIndex?: number;
+    isDeleted?: boolean;
+  };
+  currentWordId: string | null;
+  selectedWordIds: Set<string>;
+  wordRefs: React.MutableRefObject<Map<string, HTMLSpanElement>>;
+  handleWordClick: (word: TranscriptWord, event: React.MouseEvent) => void;
+  handleMouseUp: () => void;
+  hardRemoveClip: (clipId: string) => void;
+}
+
+const ClipItem = ({
+  clipId,
+  index,
+  clip,
+  currentWordId,
+  selectedWordIds,
+  wordRefs,
+  handleWordClick,
+  handleMouseUp,
+  hardRemoveClip,
+}: ClipItemProps) => {
+  const dragControls = useDragControls();
+
+  const clipWords = clip.words;
+  const clipDurationMs = clipWords.filter(w => !w.isDeleted).reduce((sum, w) => sum + (w.endMs - w.startMs), 0);
+  // Use clip's stored colorIndex, or derive stable color from clipId (not position)
+  const color = getClipColor(clip.colorIndex ?? getStableColorIndex(clipId));
+  const isClipDeleted = clip.isDeleted;
+
+  return (
+    <Reorder.Item
+      value={clipId}
+      dragListener={false}
+      dragControls={dragControls}
+      className={cn(
+        "border-b border-border last:border-b-0 bg-white select-none",
+        isClipDeleted && "opacity-60 bg-red-50/50"
+      )}
+      initial={{ opacity: 0, y: -10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -10 }}
+      whileDrag={{
+        scale: 1.02,
+        boxShadow: "0 10px 40px rgba(0,0,0,0.15)",
+        zIndex: 50,
+        cursor: "grabbing"
+      }}
+      transition={{
+        layout: { type: "spring", stiffness: 500, damping: 35 },
+        opacity: { duration: 0.2 },
+        y: { duration: 0.2 }
+      }}
+      layout
+    >
+      {/* Clip Header - colored background */}
+      <div className={cn(
+        "flex items-center gap-2 md:gap-3 px-3 md:px-4 py-2 md:py-3",
+        isClipDeleted ? "bg-red-50 border-b border-red-200" : cn(color.light, color.border, "border-b")
+      )}>
+        {/* Drag handle - only this initiates drag */}
+        <div
+          onPointerDown={(e) => dragControls.start(e)}
+          className={cn(
+            "cursor-grab active:cursor-grabbing touch-none p-1 -m-1 rounded transition-colors",
+            isClipDeleted ? "text-red-400" : cn(color.text, "opacity-50 hover:opacity-100 hover:bg-black/5")
+          )}
+        >
+          <GripVertical className="h-4 w-4" />
+        </div>
+
+        <span className={cn(
+          "text-sm font-semibold flex-1 truncate",
+          isClipDeleted ? "text-red-700 line-through" : color.text
+        )}>
+          Clip {index + 1}
+          {isClipDeleted && (
+            <span className="ml-1 md:ml-2 text-xs font-normal text-red-500 no-underline">
+              (removed)
+            </span>
+          )}
+        </span>
+
+        {!isClipDeleted && (
+          <span className={cn(
+            "text-xs font-medium px-1.5 md:px-2 py-0.5 rounded-md shrink-0 bg-white/60",
+            color.text
+          )}>
+            {formatDuration(clipDurationMs)}
+          </span>
+        )}
+
+        {/* Delete Button */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn(
+            "h-8 w-8 md:h-7 md:w-7 rounded-lg hover:text-red-600 hover:bg-red-100/80",
+            isClipDeleted ? "text-red-400" : cn(color.text, "opacity-50 hover:opacity-100")
+          )}
+          onClick={() => hardRemoveClip(clipId)}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+
+      {/* Clip Words - drag to select */}
+      <div
+        className={cn(
+          "px-4 py-3 overflow-hidden",
+          isClipDeleted && "pointer-events-none select-none"
+        )}
+        onMouseUp={!isClipDeleted ? handleMouseUp : undefined}
+      >
+        <p className={cn(
+          "text-sm leading-8 max-w-full select-text",
+          isClipDeleted && "line-through text-red-700/70"
+        )} style={{ wordWrap: "break-word", overflowWrap: "break-word", wordBreak: "break-word" }}>
+          {clipWords.map((word, wordIndex) => (
+            <span key={word.id}>
+              <span
+                ref={(el) => {
+                  if (el) wordRefs.current.set(word.id, el);
+                }}
+                onClick={(e) => !isClipDeleted && handleWordClick(word, e)}
+                className={cn(
+                  "rounded px-0.5 py-0.5 transition-colors duration-100 inline",
+                  isClipDeleted
+                    ? "cursor-default"
+                    : "cursor-text",
+                  !isClipDeleted && word.isDeleted
+                    ? "line-through opacity-50 bg-red-100 text-red-700"
+                    : !isClipDeleted && currentWordId === word.id
+                    ? "bg-primary text-white font-medium"
+                    : !isClipDeleted && selectedWordIds.has(word.id)
+                    ? cn(color.light, color.text, "font-medium")
+                    : !isClipDeleted && "hover:bg-muted"
+                )}
+              >
+                {word.text}{wordIndex < clipWords.length - 1 ? " " : ""}
+              </span>
+            </span>
+          ))}
+        </p>
+      </div>
+    </Reorder.Item>
+  );
 };
 
 export const Transcript = () => {
@@ -435,140 +600,49 @@ export const Transcript = () => {
             </p>
           </div>
 
-          {clipOrder
-            .filter((clipId) => {
+          <Reorder.Group
+            axis="y"
+            values={clipOrder.filter((clipId) => {
               const clip = clips[clipId];
-              // Filter out B-roll and music - those are managed in the timeline
-              return clip && clip.clipType !== "video_only" && clip.clipType !== "background_music";
-            })
-            .map((clipId, index) => {
-            const clip = clips[clipId];
-            if (!clip || clip.status !== "ready") return null;
+              return clip && clip.clipType !== "video_only" && clip.clipType !== "background_music" && clip.status === "ready";
+            })}
+            onReorder={(newVisibleOrder) => {
+              // Rebuild full clipOrder maintaining positions of hidden clips
+              const hiddenClips = clipOrder.filter((id) => {
+                const clip = clips[id];
+                return !clip || clip.clipType === "video_only" || clip.clipType === "background_music" || clip.status !== "ready";
+              });
+              // Put visible clips in new order, hidden clips at the end
+              reorderClips([...newVisibleOrder, ...hiddenClips]);
+            }}
+            className="relative"
+            layoutScroll
+          >
+            {clipOrder
+              .filter((clipId) => {
+                const clip = clips[clipId];
+                return clip && clip.clipType !== "video_only" && clip.clipType !== "background_music" && clip.status === "ready";
+              })
+              .map((clipId, index) => {
+                const clip = clips[clipId];
+                if (!clip) return null;
 
-            const clipWords = clip.words;
-            const clipDurationMs = clipWords.filter(w => !w.isDeleted).reduce((sum, w) => sum + (w.endMs - w.startMs), 0);
-
-            const color = getClipColor(index);
-            const isClipDeleted = clip.isDeleted;
-
-            return (
-              <div key={clipId} className={cn(
-                "border-b border-border last:border-b-0 transition-all duration-300",
-                isClipDeleted && "opacity-60 bg-red-50/50"
-              )}>
-                {/* Clip Header */}
-                <div className={cn(
-                  "flex items-center gap-2 md:gap-3 px-3 md:px-4 py-2 md:py-3 sticky top-0 z-10 border-b border-border/50",
-                  isClipDeleted ? "bg-red-50" : "bg-white"
-                )}>
-                  {/* Color indicator dot */}
-                  <div className={cn(
-                    "w-2.5 h-2.5 md:w-3 md:h-3 rounded-full shadow-sm shrink-0",
-                    isClipDeleted ? "bg-red-400" : color.bg
-                  )} />
-
-                  <span className={cn(
-                    "text-sm font-semibold flex-1 truncate",
-                    isClipDeleted ? "text-red-700 line-through" : "text-foreground"
-                  )}>
-                    Clip {index + 1}
-                    {isClipDeleted && (
-                      <span className="ml-1 md:ml-2 text-xs font-normal text-red-500 no-underline">
-                        (removed)
-                      </span>
-                    )}
-                  </span>
-
-                  {!isClipDeleted && (
-                    <span className={cn(
-                      "text-xs font-medium px-1.5 md:px-2 py-0.5 rounded-md shrink-0",
-                      color.light, color.text
-                    )}>
-                      {formatDuration(clipDurationMs)}
-                    </span>
-                  )}
-
-                  {/* Reorder & Delete Buttons */}
-                  <div className="flex gap-0.5">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 md:h-7 md:w-7 rounded-lg hover:bg-muted"
-                      disabled={index === 0}
-                      onClick={() => {
-                        const newOrder = [...clipOrder];
-                        [newOrder[index - 1], newOrder[index]] = [newOrder[index], newOrder[index - 1]];
-                        reorderClips(newOrder);
-                      }}
-                    >
-                      <ChevronUp className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 md:h-7 md:w-7 rounded-lg hover:bg-muted"
-                      disabled={index === clipOrder.length - 1}
-                      onClick={() => {
-                        const newOrder = [...clipOrder];
-                        [newOrder[index], newOrder[index + 1]] = [newOrder[index + 1], newOrder[index]];
-                        reorderClips(newOrder);
-                      }}
-                    >
-                      <ChevronDown className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 md:h-7 md:w-7 rounded-lg text-muted-foreground hover:text-red-500 hover:bg-red-50"
-                      onClick={() => hardRemoveClip(clipId)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Clip Words - drag to select */}
-                <div
-                  className={cn(
-                    "px-4 py-3 overflow-hidden",
-                    isClipDeleted && "pointer-events-none select-none"
-                  )}
-                  onMouseUp={!isClipDeleted ? handleMouseUp : undefined}
-                >
-                  <p className={cn(
-                    "text-sm leading-8 max-w-full",
-                    isClipDeleted && "line-through text-red-700/70"
-                  )} style={{ wordWrap: "break-word", overflowWrap: "break-word", wordBreak: "break-word" }}>
-                    {clipWords.map((word, wordIndex) => (
-                      <span key={word.id}>
-                        <span
-                          ref={(el) => {
-                            if (el) wordRefs.current.set(word.id, el);
-                          }}
-                          onClick={(e) => !isClipDeleted && handleWordClick(word, e)}
-                          className={cn(
-                            "rounded px-0.5 py-0.5 transition-colors duration-100 inline",
-                            isClipDeleted
-                              ? "cursor-default"
-                              : "cursor-text",
-                            !isClipDeleted && word.isDeleted
-                              ? "line-through opacity-50 bg-red-100 text-red-700"
-                              : !isClipDeleted && currentWordId === word.id
-                              ? "bg-primary text-white font-medium"
-                              : !isClipDeleted && selectedWordIds.has(word.id)
-                              ? cn(color.light, color.text, "font-medium")
-                              : !isClipDeleted && "hover:bg-muted"
-                          )}
-                        >
-                          {word.text}{wordIndex < clipWords.length - 1 ? " " : ""}
-                        </span>
-                      </span>
-                    ))}
-                  </p>
-                </div>
-              </div>
-            );
-          })}
+                return (
+                  <ClipItem
+                    key={clipId}
+                    clipId={clipId}
+                    index={index}
+                    clip={clip}
+                    currentWordId={currentWordId}
+                    selectedWordIds={selectedWordIds}
+                    wordRefs={wordRefs}
+                    handleWordClick={handleWordClick}
+                    handleMouseUp={handleMouseUp}
+                    hardRemoveClip={hardRemoveClip}
+                  />
+                );
+              })}
+          </Reorder.Group>
 
         </div>
       )}

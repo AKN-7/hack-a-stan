@@ -59,6 +59,7 @@ export interface ClipTranscript {
   clipType?: ClipType;  // Type of clip (default: video_with_audio)
   durationMs?: number;  // Duration of the clip in ms (needed for video_only clips without words)
   volume?: number;  // Volume level 0-1 (default: 1 for video, 0.3 for background_music)
+  colorIndex?: number;  // Color index assigned at creation, persists through reordering
 }
 
 // Segment to cut from video
@@ -872,23 +873,28 @@ const useTranscriptStore = create<ITranscriptStore>()(
           return;
         }
 
-        set((state) => ({
-          clips: {
-            ...state.clips,
-            [clipId]: {
-              clipId,
-              url,
-              status: "pending",
-              words: [],
-              text: "",
-              clipType: clipType || "video_with_audio",
-              durationMs: durationMs,
+        set((state) => {
+          // Assign colorIndex based on total clips ever added (persists through reordering)
+          const colorIndex = Object.keys(state.clips).length % 6;
+          return {
+            clips: {
+              ...state.clips,
+              [clipId]: {
+                clipId,
+                url,
+                status: "pending",
+                words: [],
+                text: "",
+                clipType: clipType || "video_with_audio",
+                durationMs: durationMs,
+                colorIndex,
+              },
             },
-          },
-          clipOrder: state.clipOrder.includes(clipId)
-            ? state.clipOrder
-            : [...state.clipOrder, clipId],
-        }));
+            clipOrder: state.clipOrder.includes(clipId)
+              ? state.clipOrder
+              : [...state.clipOrder, clipId],
+          };
+        });
       },
 
       setClipType: (clipId: string, clipType: ClipType) => {
