@@ -201,7 +201,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
     (set, get) => ({
       clips: {},
       clipOrder: [],
-      gapThresholdMs: 500,
+      gapThresholdMs: 300,
 
       // Auto-magic processing state
       autoProcessEnabled: true, // Enabled by default!
@@ -1408,7 +1408,7 @@ const useTranscriptStore = create<ITranscriptStore>()(
 
           // Step 3: Optimize pacing (set gap threshold)
           set({ processingStatus: "Optimizing pacing..." });
-          setGapThreshold(500); // Standard pacing
+          setGapThreshold(300); // Tighter pacing - cuts gaps >300ms
 
           // Step 4: Smooth jump cuts - DISABLED by default
           // The alternating zoom was causing "shakiness" perception

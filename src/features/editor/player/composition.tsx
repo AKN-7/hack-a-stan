@@ -282,8 +282,9 @@ const Composition = () => {
               key={`transcript-${segment.clipId}-${index}`}
               from={startFrame}
               durationInFrames={durationInFrames}
+              premountFor={fps}
             >
-              <AbsoluteFill>
+              <AbsoluteFill style={{ overflow: "hidden" }}>
                 <Video
                   src={segment.clipUrl}
                   startFrom={videoStartFrame}
@@ -292,8 +293,8 @@ const Composition = () => {
                     width: "100%",
                     height: "100%",
                     objectFit: "cover",
+                    transform: "scale(1.01)",
                   }}
-                  pauseWhenBuffering
                 />
               </AbsoluteFill>
             </Sequence>
