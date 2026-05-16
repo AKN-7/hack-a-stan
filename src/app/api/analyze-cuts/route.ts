@@ -1,9 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { generateMercuryText } from "@/lib/inception-generate-text";
 import { NextRequest } from "next/server";
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
 
 interface ClipTranscript {
   clipId: string;
@@ -112,18 +108,12 @@ Return JSON:
 Use actual clipId values like "${clips[0]?.clipId}".
 Return ONLY valid JSON.`;
 
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 2048,
-    temperature: 0,
+  const responseText = await generateMercuryText({
     system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }],
+    user: userPrompt,
+    maxOutputTokens: 2048,
+    temperature: 0,
   });
-
-  const responseText = response.content
-    .filter((block): block is Anthropic.TextBlock => block.type === "text")
-    .map(block => block.text)
-    .join("");
 
   console.log("\n" + "-".repeat(80));
   console.log("[PASS 1] FULL RAW RESPONSE:");
@@ -277,18 +267,12 @@ Return JSON:
 Use actual clipId values like "${clips[0]?.clipId}".
 Return ONLY valid JSON.`;
 
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 2048,
-    temperature: 0,
+  const responseText = await generateMercuryText({
     system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }],
+    user: userPrompt,
+    maxOutputTokens: 2048,
+    temperature: 0,
   });
-
-  const responseText = response.content
-    .filter((block): block is Anthropic.TextBlock => block.type === "text")
-    .map(block => block.text)
-    .join("");
 
   console.log("\n" + "-".repeat(80));
   console.log("[PASS 2] FULL RAW RESPONSE:");
@@ -385,18 +369,12 @@ Use the EXACT sentence IDs shown above (like "${sentences[0]?.id}").
 Include ALL sentence IDs in your order - don't skip any.
 Return ONLY valid JSON.`;
 
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 4096,
-    temperature: 0,
+  const responseText = await generateMercuryText({
     system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }],
+    user: userPrompt,
+    maxOutputTokens: 4096,
+    temperature: 0,
   });
-
-  const responseText = response.content
-    .filter((block): block is Anthropic.TextBlock => block.type === "text")
-    .map(block => block.text)
-    .join("");
 
   console.log("\n" + "-".repeat(80));
   console.log("[PASS 2 SENTENCES] FULL RAW RESPONSE:");
@@ -562,18 +540,12 @@ Return JSON:
 Use actual IDs from the word lists above.
 Return ONLY valid JSON.`;
 
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 4096,
-    temperature: 0,
+  const responseText = await generateMercuryText({
     system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }],
+    user: userPrompt,
+    maxOutputTokens: 4096,
+    temperature: 0,
   });
-
-  const responseText = response.content
-    .filter((block): block is Anthropic.TextBlock => block.type === "text")
-    .map(block => block.text)
-    .join("");
 
   console.log("\n" + "-".repeat(80));
   console.log("[PASS 3] FULL RAW RESPONSE:");
@@ -711,18 +683,12 @@ If the script is tight with no redundancy:
 Use the EXACT sentence IDs shown above.
 Return ONLY valid JSON.`;
 
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 4096,
-    temperature: 0,
+  const responseText = await generateMercuryText({
     system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }],
+    user: userPrompt,
+    maxOutputTokens: 4096,
+    temperature: 0,
   });
-
-  const responseText = response.content
-    .filter((block): block is Anthropic.TextBlock => block.type === "text")
-    .map(block => block.text)
-    .join("");
 
   console.log("\n" + "-".repeat(80));
   console.log("[PASS 4] FULL RAW RESPONSE:");
@@ -860,18 +826,12 @@ Return JSON:
 Use the EXACT clipId values provided.
 Return ONLY valid JSON.`;
 
-  const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 4096,
-    temperature: 0.3,  // Slight creativity for varied choices
+  const responseText = await generateMercuryText({
     system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }],
+    user: userPrompt,
+    maxOutputTokens: 4096,
+    temperature: 0.3,
   });
-
-  const responseText = response.content
-    .filter((block): block is Anthropic.TextBlock => block.type === "text")
-    .map(block => block.text)
-    .join("");
 
   console.log("\n" + "-".repeat(80));
   console.log("[PASS 5] FULL RAW RESPONSE:");

@@ -11,7 +11,7 @@
 		"create-subtitles": "node sub.mjs"
 	},
 	"dependencies": {
-		"@anthropic-ai/sdk": "^0.71.2",
+		"@ai-sdk/openai": "^3.0.64",
 		"@aws-sdk/client-s3": "^3.975.0",
 		"@aws-sdk/s3-request-presigner": "^3.975.0",
 		"@cleanvoice/cleanvoice-sdk": "^2.0.2",
@@ -69,6 +69,7 @@
 		"@types/react-dom": "^19",
 		"@types/react-syntax-highlighter": "^15.5.13",
 		"@vercel/analytics": "^1.4.0",
+		"ai": "^6.0.183",
 		"axios": "^1.10.0",
 		"class-variance-authority": "^0.7.1",
 		"clsx": "^2.1.1",
@@ -101,7 +102,7 @@
 		"tailwind-merge": "^3.3.0",
 		"tinycolor2": "^1.6.0",
 		"vaul": "^1.1.2",
-		"zod": "^3.25.3",
+		"zod": "^3.25.76",
 		"zustand": "^5.0.4"
 	},
 	"devDependencies": {

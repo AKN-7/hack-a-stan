@@ -1,15 +1,27 @@
-import type { Tool } from "@anthropic-ai/sdk/resources/messages";
-
 /**
  * Comprehensive tool definitions for AI-powered video editing
  * Maps to transcript store, DesignCombo, and external generation APIs
  */
 
+/** JSON Schema fragment for provider tool / function definitions */
+export interface EditorToolSchema {
+  type: "object";
+  properties?: Record<string, unknown>;
+  required?: string[];
+  [key: string]: unknown;
+}
+
+export interface EditorToolDefinition {
+  name: string;
+  description: string;
+  input_schema: EditorToolSchema;
+}
+
 // ============================================================================
 // TRANSCRIPT EDITING TOOLS
 // ============================================================================
 
-const transcriptTools: Tool[] = [
+const transcriptTools: EditorToolDefinition[] = [
   {
     name: "delete_words",
     description:
@@ -231,7 +243,7 @@ const transcriptTools: Tool[] = [
 // NAVIGATION & PLAYBACK TOOLS
 // ============================================================================
 
-const navigationTools: Tool[] = [
+const navigationTools: EditorToolDefinition[] = [
   {
     name: "seek_to",
     description: "Seek the video player to a specific time or phrase in the transcript.",
@@ -274,7 +286,7 @@ const navigationTools: Tool[] = [
 // TEXT OVERLAY TOOLS
 // ============================================================================
 
-const textOverlayTools: Tool[] = [
+const textOverlayTools: EditorToolDefinition[] = [
   {
     name: "add_text_overlay",
     description:
@@ -425,7 +437,7 @@ const textOverlayTools: Tool[] = [
 // CAPTION STYLING TOOLS
 // ============================================================================
 
-const captionTools: Tool[] = [
+const captionTools: EditorToolDefinition[] = [
   {
     name: "apply_caption_preset",
     description:
@@ -533,7 +545,7 @@ const captionTools: Tool[] = [
 // ASSET GENERATION TOOLS
 // ============================================================================
 
-const generationTools: Tool[] = [
+const generationTools: EditorToolDefinition[] = [
   {
     name: "generate_broll_image",
     description:
@@ -683,7 +695,7 @@ const generationTools: Tool[] = [
 // AUDIO & VISUALIZATION TOOLS
 // ============================================================================
 
-const audioTools: Tool[] = [
+const audioTools: EditorToolDefinition[] = [
   {
     name: "add_audio_visualization",
     description: "Add an audio visualization element (waveform bars, wave, hill, radial) that reacts to audio.",
@@ -750,7 +762,7 @@ const audioTools: Tool[] = [
 // VISUAL EFFECTS TOOLS
 // ============================================================================
 
-const effectsTools: Tool[] = [
+const effectsTools: EditorToolDefinition[] = [
   {
     name: "apply_transition",
     description: "Apply a transition effect between two clips or at a cut point.",
@@ -851,7 +863,7 @@ const effectsTools: Tool[] = [
 // ANALYSIS & SUGGESTION TOOLS
 // ============================================================================
 
-const analysisTools: Tool[] = [
+const analysisTools: EditorToolDefinition[] = [
   {
     name: "analyze_transcript",
     description:
@@ -918,7 +930,7 @@ const analysisTools: Tool[] = [
 // ENHANCEMENT & AUTO-EDIT TOOLS
 // ============================================================================
 
-const enhancementTools: Tool[] = [
+const enhancementTools: EditorToolDefinition[] = [
   {
     name: "smart_reorder_clips",
     description:
@@ -1081,7 +1093,7 @@ const enhancementTools: Tool[] = [
 // EXPORT ALL TOOLS
 // ============================================================================
 
-export const editorTools: Tool[] = [
+export const editorTools: EditorToolDefinition[] = [
   ...transcriptTools,
   ...navigationTools,
   ...textOverlayTools,
@@ -1107,7 +1119,7 @@ export const toolCategories = {
 };
 
 // Helper type for tool inputs
-export type ToolName = typeof editorTools[number]["name"];
+export type ToolName = (typeof editorTools)[number]["name"];
 
 // Comprehensive type definitions for tool inputs
 export interface ToolInput {

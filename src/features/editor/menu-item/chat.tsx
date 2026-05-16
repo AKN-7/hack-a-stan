@@ -27,7 +27,12 @@ import {
   X,
   Play,
   Clock,
-  Trash2
+  Trash2,
+  ChevronDown,
+  ChevronUp,
+  Check,
+  Undo2,
+  Film,
 } from "lucide-react";
 import { MessageMarkdown } from "@/components/message-markdown";
 import { ShimmeringText } from "@/components/ui/shimmering-text";
@@ -35,8 +40,12 @@ import useChatStore, { ChatMessage, ToolCall } from "@/features/chat/use-chat-st
 import useTranscriptStore, { MagicProcessingResult, ProcessingEvent } from "@/features/editor/store/use-transcript-store";
 import useStore from "@/features/editor/store/use-store";
 import { executeToolCall } from "@/features/chat/tool-executor";
-import type Anthropic from "@anthropic-ai/sdk";
-import { ChevronDown, ChevronUp, Check, Undo2, Film, Type as TypeIcon } from "lucide-react";
+import type {
+  WireAssistantResponse,
+  WireChatMessage,
+  WireContentBlock,
+  WireToolResultBlock,
+} from "@/features/chat/chat-wire-format";
 
 // Progress hints that rotate during AI analysis
 const PROGRESS_HINTS = [
@@ -280,12 +289,12 @@ export function Chat() {
     };
   }, [transcriptStore, editorStore.trackItemsMap]);
 
-  // Process Claude response and execute tools
+  // Process Mercury / AI SDK (wire-format) response and execute tools client-side
   const processResponse = useCallback(
     async (
-      response: Anthropic.Message,
+      response: WireAssistantResponse,
       messageId: string,
-      conversationMessages: Anthropic.MessageParam[]
+      conversationMessages: WireChatMessage[]
     ) => {
       let textContent = "";
       const newToolCalls: ToolCall[] = [];
@@ -315,7 +324,7 @@ export function Chat() {
 
       // If there are tool calls, execute them and continue
       if (newToolCalls.length > 0 && response.stop_reason === "tool_use") {
-        const toolResults: Anthropic.ToolResultBlockParam[] = [];
+        const toolResults: WireToolResultBlock[] = [];
 
         for (const tool of newToolCalls) {
           try {
@@ -329,7 +338,7 @@ export function Chat() {
               tool_use_id: tool.id,
               content: JSON.stringify(result.result),
               is_error: !result.success,
-            });
+            } satisfies WireToolResultBlock);
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "Tool execution failed";
             updateToolCallResult(messageId, tool.id, { error: errorMessage }, true);
@@ -338,7 +347,7 @@ export function Chat() {
               tool_use_id: tool.id,
               content: errorMessage,
               is_error: true,
-            });
+            } satisfies WireToolResultBlock);
           }
         }
 
@@ -357,7 +366,7 @@ export function Chat() {
         });
 
         if (continueResponse.ok) {
-          const continueData = (await continueResponse.json()) as Anthropic.Message;
+          const continueData = (await continueResponse.json()) as WireAssistantResponse;
 
           // Extract final text response (append, don't replace)
           let finalText = "";
@@ -379,7 +388,7 @@ export function Chat() {
           if (continueData.stop_reason === "tool_use") {
             await processResponse(continueData, messageId, [
               ...conversationMessages,
-              { role: "assistant", content: response.content },
+              { role: "assistant", content: response.content as WireContentBlock[] },
               { role: "user", content: toolResults },
             ]);
           }
@@ -389,7 +398,7 @@ export function Chat() {
     [updateMessage, appendToolCall, updateToolCallResult, getEditorContext]
   );
 
-  // Send message to Claude
+  // Send message to Waffle Chef (Mercury via AI SDK)
   const sendMessage = useCallback(async () => {
     const trimmedInput = input.trim();
     if (!trimmedInput || isLoading) return;
@@ -402,7 +411,7 @@ export function Chat() {
     addMessage({ role: "user", content: trimmedInput });
 
     // Prepare conversation history
-    const conversationMessages: Anthropic.MessageParam[] = messages.map((msg) => ({
+    const conversationMessages: WireChatMessage[] = messages.map((msg) => ({
       role: msg.role,
       content: msg.content,
     }));
@@ -426,7 +435,7 @@ export function Chat() {
         throw new Error(error.error || "Failed to get response");
       }
 
-      const data = (await response.json()) as Anthropic.Message;
+      const data = (await response.json()) as WireAssistantResponse;
       await processResponse(data, assistantMessageId, conversationMessages);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Something went wrong";
@@ -461,7 +470,7 @@ export function Chat() {
       addMessage({ role: "user", content: prompt });
 
       // Prepare conversation history
-      const conversationMessages: Anthropic.MessageParam[] = messages.map((msg) => ({
+      const conversationMessages: WireChatMessage[] = messages.map((msg) => ({
         role: msg.role,
         content: msg.content,
       }));
@@ -485,7 +494,7 @@ export function Chat() {
           throw new Error(error.error || "Failed to get response");
         }
 
-        const data = (await response.json()) as Anthropic.Message;
+        const data = (await response.json()) as WireAssistantResponse;
         await processResponse(data, assistantMessageId, conversationMessages);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Something went wrong";
@@ -1126,7 +1135,7 @@ function MagicProcessingSummary({ result, onDismiss }: { result: MagicProcessing
           {result.textHook && (
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5 text-xs font-medium text-indigo-600">
-                <TypeIcon className="h-3.5 w-3.5" />
+                <Type className="h-3.5 w-3.5" />
                 <span>Text hook added</span>
               </div>
               <div className="pl-5">

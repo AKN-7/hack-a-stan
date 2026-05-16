@@ -1,11 +1,14 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { editorTools } from "@/features/chat/tools";
+import { generateText } from "ai";
+import { editorAiTools } from "@/features/chat/editor-tools-ai";
+import {
+  generateTextResultToWireResponse,
+  wireMessagesToModelMessages,
+  type WireAssistantResponse,
+  type WireChatMessage,
+  type WireToolResultBlock,
+} from "@/features/chat/chat-wire-format";
+import { assertInceptionApiKey, mercuryChatModel } from "@/lib/inception-mercury";
 import { NextRequest } from "next/server";
-
-// Initialize Anthropic client
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
 
 interface ClipContext {
   id: string;
@@ -232,8 +235,13 @@ When a user uploads multiple clips and wants them transformed into one polished 
 4. Result: Clean, well-paced, logically-ordered video with professional polish!`;
 }
 
+function httpError(message: string, status: number) {
+  return Response.json({ error: message, code: status }, { status });
+}
+
 export async function POST(request: NextRequest) {
   try {
+    assertInceptionApiKey();
     const body = await request.json();
     const { messages, editorContext } = body as {
       messages: ChatMessage[];
@@ -241,64 +249,56 @@ export async function POST(request: NextRequest) {
     };
 
     if (!messages || !Array.isArray(messages)) {
-      return Response.json(
-        { error: "Messages array is required" },
-        { status: 400 }
-      );
+      return httpError("Messages array is required", 400);
     }
 
-    // Build conversation for Claude
-    const claudeMessages: Anthropic.MessageParam[] = messages.map((msg) => ({
+    const wireMessages: WireChatMessage[] = messages.map((msg) => ({
       role: msg.role,
       content: msg.content,
     }));
 
-    // Create message with tools
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 4096,
+    const modelMessages = wireMessagesToModelMessages(wireMessages);
+
+    const result = await generateText({
+      model: mercuryChatModel,
       system: buildSystemPrompt(editorContext),
-      tools: editorTools,
-      messages: claudeMessages,
+      messages: modelMessages,
+      tools: editorAiTools,
+      maxOutputTokens: 4096,
     });
 
-    return Response.json(response);
+    const payload: WireAssistantResponse =
+      generateTextResultToWireResponse(result);
+    return Response.json(payload);
   } catch (error) {
     console.error("Chat API error:", error);
-
-    if (error instanceof Anthropic.APIError) {
-      return Response.json(
-        { error: error.message, code: error.status },
-        { status: error.status || 500 }
-      );
-    }
-
-    return Response.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    const message =
+      error instanceof Error ? error.message : "Internal server error";
+    const status =
+      message.includes("INCEPTION_API_KEY") ||
+      message.toLowerCase().includes("api key")
+        ? 500
+        : 500;
+    return httpError(message, status);
   }
 }
 
 // Handle tool result continuation
 export async function PUT(request: NextRequest) {
   try {
+    assertInceptionApiKey();
     const body = await request.json();
     const { messages, editorContext, toolResults } = body as {
-      messages: Anthropic.MessageParam[];
+      messages: WireChatMessage[];
       editorContext: EditorContext;
-      toolResults: Anthropic.ToolResultBlockParam[];
+      toolResults: WireToolResultBlock[];
     };
 
     if (!messages || !toolResults) {
-      return Response.json(
-        { error: "Messages and tool results are required" },
-        { status: 400 }
-      );
+      return httpError("Messages and tool results are required", 400);
     }
 
-    // Add tool results to messages
-    const updatedMessages: Anthropic.MessageParam[] = [
+    const updatedMessages: WireChatMessage[] = [
       ...messages,
       {
         role: "user",
@@ -306,29 +306,23 @@ export async function PUT(request: NextRequest) {
       },
     ];
 
-    // Continue the conversation
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 4096,
+    const modelMessages = wireMessagesToModelMessages(updatedMessages);
+
+    const result = await generateText({
+      model: mercuryChatModel,
       system: buildSystemPrompt(editorContext),
-      tools: editorTools,
-      messages: updatedMessages,
+      messages: modelMessages,
+      tools: editorAiTools,
+      maxOutputTokens: 4096,
     });
 
-    return Response.json(response);
+    const payload: WireAssistantResponse =
+      generateTextResultToWireResponse(result);
+    return Response.json(payload);
   } catch (error) {
     console.error("Chat continuation error:", error);
-
-    if (error instanceof Anthropic.APIError) {
-      return Response.json(
-        { error: error.message, code: error.status },
-        { status: error.status || 500 }
-      );
-    }
-
-    return Response.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    const message =
+      error instanceof Error ? error.message : "Internal server error";
+    return httpError(message, 500);
   }
 }
