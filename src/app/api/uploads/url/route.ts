@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { nanoid } from "nanoid";
 
 const s3Client = new S3Client({
@@ -62,14 +63,21 @@ export async function POST(request: NextRequest) {
           })
         );
 
-        const publicUrl = `https://${BUCKET_NAME}.s3.${process.env.REMOTION_AWS_REGION || "us-east-1"}.amazonaws.com/${filePath}`;
+        const readUrl = await getSignedUrl(
+          s3Client,
+          new GetObjectCommand({
+            Bucket: BUCKET_NAME,
+            Key: filePath,
+          }),
+          { expiresIn: 60 * 60 * 24 * 7 }
+        );
 
         return {
           fileName: filePath.split("/").pop(),
           filePath,
           contentType,
           originalUrl: url,
-          url: publicUrl,
+          url: readUrl,
         };
       })
     );

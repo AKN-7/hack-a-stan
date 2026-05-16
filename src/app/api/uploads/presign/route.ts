@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { nanoid } from "nanoid";
 
@@ -51,25 +51,32 @@ export async function POST(request: NextRequest) {
         const filePath = `uploads/${fileId}.${ext}`;
         const contentType = getContentType(fileName);
 
-        const command = new PutObjectCommand({
+        const putCommand = new PutObjectCommand({
           Bucket: BUCKET_NAME,
           Key: filePath,
           ContentType: contentType,
-          ACL: "public-read", // Allow Deepgram and other services to access the file
         });
 
-        const presignedUrl = await getSignedUrl(s3Client, command, {
+        const presignedUrl = await getSignedUrl(s3Client, putCommand, {
           expiresIn: 3600, // 1 hour
         });
 
-        const publicUrl = `https://${BUCKET_NAME}.s3.${process.env.REMOTION_AWS_REGION || "us-east-1"}.amazonaws.com/${filePath}`;
+        // Readable URL for browsers / transcription APIs (private bucket; no object ACLs).
+        const readUrl = await getSignedUrl(
+          s3Client,
+          new GetObjectCommand({
+            Bucket: BUCKET_NAME,
+            Key: filePath,
+          }),
+          { expiresIn: 60 * 60 * 24 * 7 } // 7 days — matches POST /api/uploads
+        );
 
         return {
           fileName,
           filePath,
           contentType,
           presignedUrl,
-          url: publicUrl,
+          url: readUrl,
         };
       })
     );

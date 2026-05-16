@@ -3,6 +3,16 @@
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
+/** Stable pseudo-duration for decorative badges (avoids SSR/client Math.random mismatch). */
+function durationBadgeSeconds(seed: string): number {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = Math.imul(31, hash) + seed.charCodeAt(i);
+    hash |= 0;
+  }
+  return 15 + (Math.abs(hash) % 60);
+}
+
 export const ThreeDMarquee = ({
   images,
   className,
@@ -78,7 +88,7 @@ export const ThreeDMarquee = ({
                       </div>
                       {/* Duration badge */}
                       <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
-                        {Math.floor(Math.random() * 60) + 15}s
+                        {durationBadgeSeconds(`${colIndex}-${imageIndex}-${image}`)}s
                       </div>
                     </div>
                   </div>
