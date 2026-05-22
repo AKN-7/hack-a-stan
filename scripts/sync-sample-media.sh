@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Copies MOVs from ~/Downloads/Arihan*Goon* into fixtures/sample-media (gitignored).
+# Copy local sample videos into fixtures/sample-media (gitignored).
+# Usage: SAMPLE_MEDIA_SRC=/path/to/videos ./scripts/sync-sample-media.sh
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$ROOT/fixtures/sample-media"
 mkdir -p "$DEST"
 
-SRC="$(find "$HOME/Downloads" -maxdepth 1 -type d -name 'Arihan*Goon*' 2>/dev/null | head -1)"
+SRC="${SAMPLE_MEDIA_SRC:-}"
 if [[ -z "$SRC" ]]; then
-  echo "Could not find Downloads folder matching Arihan*Goon*" >&2
+  echo "Set SAMPLE_MEDIA_SRC to a folder containing .mov/.mp4 files." >&2
+  echo "Example: SAMPLE_MEDIA_SRC=~/Downloads/my-clips ./scripts/sync-sample-media.sh" >&2
+  exit 1
+fi
+
+if [[ ! -d "$SRC" ]]; then
+  echo "Directory not found: $SRC" >&2
   exit 1
 fi
 

@@ -1,212 +1,116 @@
-# Expound - Hackathon Project Handoff
+# Expound — project handoff
 
-## What We're Building
+## What this is
 
-A web app for editing talking-head videos (Reels/TikTok/Shorts) where **the transcript IS the editing interface**. Delete a sentence from the text, that part of the video gets cut. Reorder paragraphs, the clips reorder.
+A web app for editing talking-head videos where **the transcript is the editing interface**. Delete a sentence from the text and that part of the video is cut. Reorder sections and clips reorder on the timeline.
 
-### The Core Flow
-1. User drags in 3-5 video clips
-2. App uploads them to S3
-3. Each clip gets sent to Whisper (via Groq) for transcription with word-level timestamps
-4. App auto-stitches clips and merges transcripts into one unified script
-5. User sees split view: transcript on left, video preview on right
-6. User edits transcript — delete filler words, remove tangents, reorder sections
-7. Every text edit maps back to video (each word has timestamp tied to specific clip)
-8. Remotion Player shows preview in real-time
-9. User clicks Export, Remotion Lambda renders final MP4 with captions
-10. User downloads finished video
+Most editors bolt on a transcript panel. Here the transcript is the source of truth; the video follows.
 
-### Key Differentiator
-Most video editors bolt on a transcript panel. We're inverting it — the transcript IS the source of truth, the video just follows.
+## Core flow
 
----
+1. User uploads one or more video clips (S3 presigned upload)
+2. Each clip is transcribed (Deepgram, word-level timestamps)
+3. Transcript panel shows the full script with per-word timing
+4. User edits text — delete filler, cut tangents, reorder clips
+5. Remotion Player previews cuts in real time
+6. Export triggers Remotion Lambda → MP4 download with captions
 
-## Tech Stack
-
-- **Next.js 15** (App Router) — web framework
-- **AWS S3** — stores uploaded clips (same bucket as Remotion Lambda)
-- **Groq Whisper API** — transcribes with word-level timestamps
-- **Remotion** — composes video programmatically in React
-- **Remotion Player** — previews composition in browser
-- **Remotion Lambda** — renders final MP4 in cloud (already deployed)
-- **DesignCombo packages** — timeline UI (@designcombo/timeline, @designcombo/state)
-
----
-
-## What's Working
+## What's working on `main`
 
 | Feature | Status |
-|---------|--------|
-| Upload video via drag & drop | ✅ Working |
-| Upload to S3 with presigned URLs | ✅ Working |
-| Video appears in uploads panel | ✅ Working |
-| Add video to timeline | ✅ Working |
-| Video playback in preview | ✅ Working |
-| Transcription API endpoint | ✅ Exists (not wired to upload flow) |
-| Render API endpoint | ✅ Exists |
+| --- | --- |
+| Drag-and-drop upload → S3 | ✅ |
+| Auto-transcription on upload | ✅ |
+| Transcript panel (select, delete, reorder) | ✅ |
+| Real-time Remotion preview | ✅ |
+| Lambda export | ✅ (needs your AWS setup) |
+| AI smart cuts (`/api/analyze-cuts`) | ✅ (needs `INCEPTION_API_KEY`) |
+| AI chat sidebar | ✅ (needs `GEMINI_API_KEY`) |
+| Audio enhancement (Cleanvoice) | ✅ optional |
+| B-roll / video generation | ✅ optional |
 
----
+## Tech stack
 
-## What Needs to Be Built
+- **Next.js 16** (App Router)
+- **Deepgram Nova-2** — transcription with word timestamps
+- **Remotion 4.0.409** — preview + Lambda render
+- **Inception Mercury** — smart-cut analysis
+- **DesignCombo** — timeline / canvas UI packages
+- **Zustand** — transcript, upload, and layout state
 
-### 1. Auto-transcribe on Upload
-When a video is uploaded, automatically call `/api/transcribe` and store the result.
+## Key files
 
-### 2. Transcript Panel UI
-- Left panel showing the full transcript
-- Each word is a span with `data-clip-id`, `data-start-ms`, `data-end-ms`
-- Editable (contenteditable or controlled input)
+### API routes (`src/app/api/`)
 
-### 3. Sync Layer (Text Edit → Video)
-- Delete word/sentence → filter those timestamps from composition
-- Reorder paragraphs → reorder video segments
-- This is the core innovation
+| Route | Purpose |
+| --- | --- |
+| `transcribe/` | Deepgram speech-to-text |
+| `uploads/presign`, `uploads/url`, `uploads/` | S3 upload flow |
+| `render/`, `render/[id]/` | Start and poll Lambda render |
+| `analyze-cuts/` | AI suggested cuts (Mercury) |
+| `chat/` | AI editing assistant |
+| `enhance-audio/` | Cleanvoice noise/filler cleanup |
+| `generate-broll/`, `generate-video/` | Optional generative media |
 
-### 4. Smart Cuts (Nice to Have)
-- Auto-detect and remove "um", "uh", long pauses, false starts
-- Detect gaps > 300-500ms between words and auto-trim silence
+### Editor (`src/features/editor/`)
 
----
+| Path | Purpose |
+| --- | --- |
+| `menu-item/transcript.tsx` | Transcript editing UI |
+| `store/use-transcript-store.ts` | Clips, words, keep/cut segments |
+| `store/use-upload-store.ts` | Upload queue + auto-transcribe |
+| `player/composition.tsx` | Remotion preview wiring |
+| `navbar.tsx` | Export flow |
 
-## Key Files
+### Remotion compositions
 
-### API Routes
-- `src/app/api/uploads/route.ts` — Uploads files to S3, returns presigned URL
-- `src/app/api/transcribe/route.ts` — Groq Whisper transcription
-- `src/app/api/render/route.ts` — Remotion Lambda rendering
+| Path | Purpose |
+| --- | --- |
+| `src/TranscriptVideo/` | Main export composition driven by transcript segments |
+| `src/CaptionedVideo/` | Caption overlay composition |
 
-### Editor Components
-- `src/features/editor/` — Main editor UI
-- `src/features/editor/menu-item/uploads.tsx` — Upload panel, handles adding videos to timeline
-- `src/features/editor/player/` — Remotion player components
-- `src/features/editor/player/items/video.tsx` — Video item renderer
+### AI chat (`src/features/chat/`)
 
-### State Management
-- `src/features/editor/store/use-upload-store.ts` — Upload state (zustand)
-- Uses `@designcombo/state` and `@designcombo/events` for timeline state
+Chat store, Gemini service, and tool executor for natural-language edits.
 
-### Remotion Compositions
-- `src/CaptionedVideo/` — Original captioned video composition (from backup)
-- `src/remotion/` — Remotion entry points
+## Data model (transcript store)
 
----
+Each word:
 
-## Environment Variables
-
-```env
-# AWS (Remotion Lambda uses same credentials)
-REMOTION_AWS_ACCESS_KEY_ID=
-REMOTION_AWS_SECRET_ACCESS_KEY=
-REMOTION_AWS_REGION=us-east-1
-REMOTION_S3_BUCKET=remotionlambda-useast1-dieejrl3lf
-
-# Remotion Lambda
-REMOTION_FUNCTION_NAME=
-REMOTION_SERVE_URL=
-
-# Groq (for Whisper transcription)
-GROQ_API_KEY=
+```ts
+{ id, text, startMs, endMs, clipId, confidence, isDeleted }
 ```
 
----
+Editing flow:
 
-## Transcription Response Format
+1. User marks words deleted (soft delete, undo-friendly)
+2. `getKeepSegments()` computes kept AV ranges
+3. Preview composition and export both consume those segments
 
-The `/api/transcribe` endpoint returns:
+## Environment variables
 
-```json
-{
-  "text": "Full transcript text...",
-  "captions": [
-    {
-      "text": "So",
-      "startMs": 12400,
-      "endMs": 12600,
-      "timestampMs": 12400,
-      "confidence": 1
-    },
-    {
-      "text": "today",
-      "startMs": 12600,
-      "endMs": 12900,
-      "timestampMs": 12600,
-      "confidence": 1
-    }
-    // ... more words
-  ],
-  "segments": [
-    { "start": 12.4, "end": 15.2, "text": "So today we're gonna talk about..." }
-  ]
-}
-```
+See [env.example](./env.example). **Use your own keys and AWS resources** — do not reuse someone else's `.env`.
 
----
+Setup walkthrough: [SETUP-CHECKLIST.md](./SETUP-CHECKLIST.md).
 
-## Smart Cuts Logic (For Reference)
+## WIP branch
 
-To auto-remove silence and filler words:
+`feat/project-document-editor` contains a larger refactor:
 
-```typescript
-// Detect speech segments from word timestamps
-function detectSpeechSegments(words, options = { maxGapMs: 300, paddingMs: 100 }) {
-  const segments = [];
-  let currentSegment = null;
+- Unified `ProjectComposition` replaces `CaptionedVideo` / `TranscriptVideo`
+- New `src/core/document/` EDL layer with Vitest tests
+- Org presets for agency-style export defaults
+- Chat UI removed; several experimental routes quarantined
 
-  for (const word of words) {
-    // Skip filler words
-    if (/^(um|uh|like|you know|basically)$/i.test(word.text.trim())) {
-      continue;
-    }
+Use that branch if you want the newer architecture; use `main` for the hackathon-stable build.
 
-    if (!currentSegment) {
-      currentSegment = { start: word.startMs - options.paddingMs, end: word.endMs + options.paddingMs };
-    } else if (word.startMs - currentSegment.end > options.maxGapMs) {
-      // Gap too large, start new segment
-      segments.push(currentSegment);
-      currentSegment = { start: word.startMs - options.paddingMs, end: word.endMs + options.paddingMs };
-    } else {
-      // Extend current segment
-      currentSegment.end = word.endMs + options.paddingMs;
-    }
-  }
+## Known gotchas
 
-  if (currentSegment) segments.push(currentSegment);
-  return segments;
-}
-```
+1. **Remotion version lock** — keep all `@remotion/*` at `4.0.409`
+2. **Presigned URLs** — S3 read URLs expire; production would need refresh or proxy
+3. **`whisper.cpp` submodule** — present in repo but unused (Deepgram handles transcription)
+4. **BoxParser console warnings** — harmless MP4 parse noise in dev tools
 
----
+## Attribution
 
-## Running the Project
-
-```bash
-cd /Users/ameenneami/Development/Hackathons/expound
-npm run dev
-# Opens at http://localhost:3000/edit (or 3002 if 3000 is taken)
-```
-
----
-
-## Known Issues / Gotchas
-
-1. **BoxParser warnings in console** — Ignore these. They're just MP4 parsing noise, doesn't affect functionality.
-
-2. **Remotion version** — All packages pinned to 4.0.409. Don't mix versions or you'll get "Multiple versions of Remotion detected" error.
-
-3. **S3 presigned URLs** — URLs expire in 7 days. For production, would need to refresh them or use a proxy.
-
-4. **DesignCombo timeline** — Has some initialization bugs (`calcBounding` error). May want to bypass their timeline entirely and build a simpler transcript-based UI.
-
----
-
-## The Vision
-
-User uploads raw footage of themselves talking. App:
-1. Auto-transcribes everything
-2. Auto-removes dead air (silence where they're just staring)
-3. Auto-removes filler words (um, uh, like)
-4. Shows them a clean transcript they can edit
-5. Every edit to the text = edit to the video
-6. Export polished video with captions baked in
-
-**This turns a 25-second rambling clip into a tight 8-second video automatically.**
+UI timeline/canvas built on [DesignCombo react-video-editor](https://github.com/designcombo/react-video-editor). Expound-specific transcript pipeline, AI cuts, and export logic are custom work on top.
